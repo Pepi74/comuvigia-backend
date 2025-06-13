@@ -5,6 +5,7 @@ import pool from '../config/db.js'
 const router = Router()
 
 /*
+En las camaras, se asume que se tiene creada una base de datos Postgresql en donde existe la tabla definida de la siguiente forma:
 CREATE TABLE camaras (
     id SERIAL PRIMARY KEY, -- Puede ser definida como id_camara
     nombre TEXT NOT NULL, 
