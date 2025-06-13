@@ -1,7 +1,9 @@
-import { Pool } from 'pg'
+import { Pool, types } from 'pg'
 import dotenv from 'dotenv'
 
 dotenv.config()
+
+types.setTypeParser(1700, val => parseFloat(val))
 
 const pool = new Pool({
   user: process.env.DB_USER,
