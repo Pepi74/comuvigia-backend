@@ -2,6 +2,8 @@ import express, { json } from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import indexRoutes from './routes/index.js'
+import camarasRoutes from './routes/camaras.js'
+import alertasRoutes from './routes/alertas.js'
 
 dotenv.config()
 
@@ -11,6 +13,8 @@ app.use(cors())
 app.use(json())
 
 app.use('/', indexRoutes)
+app.use('/api/camaras', camarasRoutes)
+app.use('/api/alertas', alertasRoutes)
 
 const PORT = process.env.PORT
 app.listen(PORT, () => {
