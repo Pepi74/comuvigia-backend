@@ -4,6 +4,18 @@ import pool from '../config/db.js'
 
 const router = Router()
 
+/*
+CREATE TABLE camaras (
+    id SERIAL PRIMARY KEY, -- Puede ser definida como id_camara
+    nombre TEXT NOT NULL, 
+    posicion DOUBLE PRECISION[] NOT NULL, -- Arreglo con valores latitid y longitud.
+    direccion TEXT NOT NULL,
+    estado_camara BOOLEAN NOT NULL DEFAULT TRUE,
+    ultima_conexion TIMESTAMP NOT NULL,
+    link_camara TEXT DEFAULT '' -- Opcional
+);
+*/
+
 router.get('/', async (_, res) => {
   try {
     const result = await pool.query('SELECT * FROM camaras')
