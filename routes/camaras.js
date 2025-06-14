@@ -9,7 +9,7 @@ En las camaras, se asume que se tiene creada una base de datos Postgresql en don
 CREATE TABLE camaras (
     id SERIAL PRIMARY KEY, -- Puede ser definida como id_camara
     nombre TEXT NOT NULL, 
-    posicion DOUBLE PRECISION[] NOT NULL, -- Arreglo con valores latitid y longitud.
+    posicion DOUBLE PRECISION[] NOT NULL, -- Arreglo con valores latitud y longitud.
     direccion TEXT NOT NULL,
     estado_camara BOOLEAN NOT NULL DEFAULT TRUE,
     ultima_conexion TIMESTAMP NOT NULL,
