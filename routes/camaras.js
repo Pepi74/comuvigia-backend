@@ -8,7 +8,7 @@ const router = Router()
 En las camaras, se asume que se tiene creada una base de datos Postgresql en donde existe la tabla definida de la siguiente forma:
 CREATE TABLE camaras (
     id SERIAL PRIMARY KEY, -- Puede ser definida como id_camara
-    nombre TEXT NOT NULL, 
+    nombre TEXT NOT NULL,
     posicion DOUBLE PRECISION[] NOT NULL, -- Arreglo con valores latitud y longitud.
     direccion TEXT NOT NULL,
     estado_camara BOOLEAN NOT NULL DEFAULT TRUE,

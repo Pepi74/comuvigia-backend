@@ -6,7 +6,7 @@ const router = Router()
 
 /*
 En las alertas, se asume que se tiene creada una base de datos Postgresql en donde existe la tabla definida de la siguiente forma:
-CREATE TABLE alertas (                                                                                          
+CREATE TABLE alertas (
     id SERIAL PRIMARY KEY, -- Puede ser definida como id_alerta
     id_camara INTEGER NOT NULL REFERENCES camaras(id), -- FK a id de tabla camaras
     mensaje TEXT NOT NULL,
