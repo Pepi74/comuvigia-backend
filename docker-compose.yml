@@ -1,0 +1,57 @@
+services:
+  backend:
+    build: .
+    environment:
+      - DB_USER=comuvigia
+      - DB_HOST=postgres
+      - DB_NAME=comuvigia-backend
+      - DB_PASSWORD=comuvigia123
+      - DB_PORT=5432
+    depends_on:
+      - postgres
+    ports:
+    - "3000:3000"
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: comuvigia
+      POSTGRES_PASSWORD: comuvigia123
+      POSTGRES_DB: comuvigia-backend
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  pgadmin:
+    image: dpage/pgadmin4
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@comuvigia.com    # Cambia si quieres
+      PGADMIN_DEFAULT_PASSWORD: admin123            # Cambia si quieres
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    restart: unless-stopped
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8082:8081"
+    depends_on:
+      - redis
+
+volumes:
+  pgdata:
+  pgadmin-data:
+  redisdata:

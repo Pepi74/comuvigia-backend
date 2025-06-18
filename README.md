@@ -27,3 +27,13 @@ Para ejecutar el backend en modo desarrollador, utilizar el siguiente comando
 ```
 npm run dev
 ```
+
+## Levantar Bases de datos + Backend
+```
+docker compose up -d --build
+
+```
+## Solo Backend
+```
+docker compose up -d --build backend
+```
