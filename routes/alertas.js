@@ -148,4 +148,39 @@ router.post('/cambiar-estado/:id', async (req, res) => {
   res.json({ ok: true });
 })
 
+router.put('/editar-descripcion/:id', async (req, res) => {
+  const id = req.params.id;
+  const { descripcion_suceso } = req.body;
+
+  try {
+    // 1. Actualizar en Postgres
+    await pool.query(
+      'UPDATE alertas SET descripcion_suceso = $1 WHERE id = $2',
+      [descripcion_suceso, id]
+    );
+
+    // 2. Obtener la alerta actualizada
+    const result = await pool.query('SELECT * FROM alertas WHERE id = $1', [id]);
+    const alertaActualizada = result.rows[0];
+
+    // 3. Actualizar en Redis (si la tienes cacheada)
+    await redisClient.set(`alerta:${id}`, JSON.stringify(alertaActualizada));
+
+    // Si la tienes en la lista `alertas`, reemplaza esa entrada (opcional)
+    const alertas = await redisClient.lRange('alertas', 0, -1);
+    const nuevasAlertas = alertas.map(a => {
+      const parsed = JSON.parse(a);
+      return parsed.id === alertaActualizada.id ? alertaActualizada : parsed;
+    });
+    await redisClient.del('alertas');
+    await redisClient.lPush('alertas', nuevasAlertas.map(JSON.stringify));
+    await redisClient.lTrim('alertas', 0, 99);
+
+    res.json({ ok: true, alerta: alertaActualizada });
+  } catch (error) {
+    console.error('Error actualizando descripción:', error);
+    res.status(500).json({ error: 'Error actualizando la descripción' });
+  }
+});
+
 export default router
