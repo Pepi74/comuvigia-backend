@@ -1,4 +1,10 @@
 services:
+  python-stream:
+    build: ./python-stream
+    container_name: python-stream
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
   backend:
     build: .
     environment:
