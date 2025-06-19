@@ -50,24 +50,33 @@ router.get('/', async (_, res) => {
 // --- Recibir alerta del servicio IA ---
 router.post('/nueva-alerta', async (req, res) => {
   const alerta = req.body;
-  // 1. Guardar en Postgres (te devuelve el id real)
-  const result = await pool.query(
-    'INSERT INTO alertas (id_camara, mensaje, hora_suceso, score_confianza) VALUES ($1, $2, $3, $4) RETURNING *',
-    [alerta.id_camara, alerta.mensaje, alerta.hora_suceso, alerta.score_confianza]
-  );
+
+  const { id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso } = alerta;
+  let result;
+
+  if (descripcion_suceso) {
+    result = await pool.query(
+      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso]
+    );
+  } else {
+    result = await pool.query(
+      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, score_confianza) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [id_camara, mensaje, hora_suceso, score_confianza]
+    );
+  }
+
   const nuevaAlerta = result.rows[0];
-  
-  // 2. Guardar serializada en Redis
+
+  // Guardar en Redis
   await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
   await redisClient.set(`alerta:${nuevaAlerta.id}`, JSON.stringify(nuevaAlerta));
   await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
-  
-  // 3. Trim lista de alertas (opcional: solo las últimas 100)
   await redisClient.lTrim('alertas', 0, 99);
-  
-  // 4. Emitir a los clientes conectados por WS
+
+  // Emitir vía WebSocket
   io.emit('nueva-alerta', nuevaAlerta);
-  
+
   res.status(201).json(nuevaAlerta);
 });
   
