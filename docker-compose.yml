@@ -2,11 +2,11 @@ services:
   backend:
     build: .
     environment:
-      - DB_USER=comuvigia
-      - DB_HOST=postgres
-      - DB_NAME=comuvigia-backend
-      - DB_PASSWORD=comuvigia123
-      - DB_PORT=5432
+      - DB_USER=${DB_USER}
+      - DB_HOST=${DB_HOST}
+      - DB_NAME=${DB_NAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=${DB_PORT}
     depends_on:
       - postgres
     ports:
@@ -26,8 +26,8 @@ services:
     image: dpage/pgadmin4
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@comuvigia.com    # Cambia si quieres
-      PGADMIN_DEFAULT_PASSWORD: admin123            # Cambia si quieres
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
     ports:
       - "8080:80"
     depends_on:
