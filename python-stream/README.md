@@ -1,15 +1,39 @@
-# ComuVigIA Stream Camara
+# ComuVigIA Backend
 
-### 1. (Recomendado) Crear y seleccionar entorno virtual
+Backend de la plataforma ComuVigIA desarrollado en NodeJS.
+
+## Instalación
+
+Utilizar el siguiente comando en una terminal
+
 ```
-python -m venv stream-env
-stream-env\Scripts\activate
-```
-### 2. Ejecutar instalación (requirements.txt):
-```
-pip install -r requirements.txt
+npm install
 ```
 
-### 3. Ejecución
+## Variables de entorno
+
+Realizar una copia del archivo `.env.example` y renombrarlo a `.env`, luego rellenar los campos necesarios de puerto y credenciales de base de datos Postgres.
+
+## Ejecución
+
+Para ejecutar el backend en modo producción, utilizar el siguiente comando
+
 ```
-python camera_stream.py
+npm run start
+```
+
+Para ejecutar el backend en modo desarrollador, utilizar el siguiente comando
+
+```
+npm run dev
+```
+
+## Levantar Bases de datos + Backend
+```
+docker compose up -d --build
+
+```
+## Solo Backend
+```
+docker compose up -d --build backend
+```
