@@ -7,12 +7,14 @@ services:
     restart: unless-stopped
   backend:
     build: .
-    environment:
-      - DB_USER=${DB_USER}
-      - DB_HOST=${DB_HOST}
-      - DB_NAME=${DB_NAME}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_PORT=${DB_PORT}
+    #environment:
+    #  - DB_USER=${DB_USER}
+    #  - DB_HOST=${DB_HOST}
+    #  - DB_NAME=${DB_NAME}
+    #  - DB_PASSWORD=${DB_PASSWORD}
+    #  - DB_PORT=${DB_PORT}
+    env_file:
+    - .env
     depends_on:
       - postgres
     ports:

@@ -4,20 +4,6 @@ import pool from '../config/db.js'
 import { createClient } from 'redis';
 import { io } from '../app.js';
 
-/*
-En las alertas, se asume que se tiene creada una base de datos Postgresql en donde existe la tabla definida de la siguiente forma:
-CREATE TABLE alertas (
-    id SERIAL PRIMARY KEY, -- Puede ser definida como id_alerta
-    id_camara INTEGER NOT NULL REFERENCES camaras(id), -- FK a id de tabla camaras
-    mensaje TEXT NOT NULL,
-    hora_suceso TIMESTAMP NOT NULL,
-    score_confianza NUMERIC NOT NULL,
-    id_clip INTEGER, -- Opcional, referencia el id del clip o video perteneciente a otra base de datos
-    descripcion_suceso TEXT, -- Opcional
-    estado SMALLINT NOT NULL DEFAULT 0 -- Estado de alerta, 0: "En Observación", 1: "Confirmada", 2: "Falso Positivo"
-);
-*/
-
 const router = Router()
 
 // Conexión a Redis

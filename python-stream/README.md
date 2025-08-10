@@ -1,18 +1,15 @@
 # ComuVigIA Stream Camara
 
-# Ambiente + Activación
+### 1. (Recomendado) Crear y seleccionar entorno virtual
 ```
 python -m venv stream-env
-
-```
-```
 stream-env\Scripts\activate
 ```
-## Instalación
+### 2. Ejecutar instalación (requirements.txt):
 ```
 pip install -r requirements.txt
 ```
-## Ejecución
+
+### 3. Ejecución
 ```
 python camera_stream.py
-```
