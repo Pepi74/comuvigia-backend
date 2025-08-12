@@ -183,4 +183,25 @@ router.put('/editar-descripcion/:id', async (req, res) => {
   }
 });
 
+// Obtener alertas por id de camara
+router.get('/camara/:id_camara', async (req, res) => {
+  const id_camara = req.params.id_camara
+  try {
+    const result = await pool.query('SELECT * FROM alertas WHERE id_camara = $1 ORDER BY hora_suceso DESC', [id_camara])
+    const alerts = result.rows
+    const cleanAlerts = alerts.map(alert => {
+        const cleaned = {}
+        for (const key in alert) {
+            if (alert[key] !== null) cleaned[key] = alert[key]            
+        }
+        return cleaned
+    })
+
+    res.json(cleanAlerts)
+  } catch (error) {
+    console.error('Error al obtener alertas:', error)
+    res.status(500).send('Error en el servidor')
+  }
+})
+
 export default router
