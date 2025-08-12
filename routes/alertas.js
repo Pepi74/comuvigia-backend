@@ -97,7 +97,7 @@ router.get('/no-vistas', async (_, res) => {
   }
 });
 
-// --- Enviar últimas alertas ---
+// --- Enviar últimas 100 alertas ---
 router.get('/ultimas', async (_, res) => {
   const ultimas = await redisClient.lRange('alertas', 0, 99);
   const alertas = ultimas.map(JSON.parse);
@@ -105,7 +105,6 @@ router.get('/ultimas', async (_, res) => {
 });
 
 // --- Marcar alertas como vistas ---
-// TODO: Actualizar "alertas" de Redis o ver otra forma para utilizar el endpoint /ultimas
 router.post('/marcar-vista/:id', async (req, res) => {
   const id = req.params.id;
   const estado = req.body.estado; // 1 -> "Confirmada", 2 -> "Falso Positivo"
@@ -116,12 +115,19 @@ router.post('/marcar-vista/:id', async (req, res) => {
   const result = await pool.query('SELECT * FROM alertas WHERE id=$1', [id]);
   const alertaActualizada = result.rows[0];
   await redisClient.set(`alerta:${id}`, JSON.stringify(alertaActualizada));
+  const lista = await redisClient.lRange('alertas', 0, -1);
+  for (let i = 0; i < lista.length; i++) {
+    const alerta = JSON.parse(lista[i]);
+    if (Number(alerta.id) === Number(id)) {
+      await redisClient.lSet('alertas', i, JSON.stringify(alertaActualizada));
+      break;
+    }
+  }
 
   res.json({ ok: true });
 });
 
 // Modificar estado de alerta
-// TODO: Actualizar "alertas" de Redis o ver otra forma para utilizar el endpoint /ultimas
 router.post('/cambiar-estado/:id', async (req, res) => {
   const id = req.params.id;
   const estado = req.body.estado; // 1 -> "Confirmada", 2 -> "Falso Positivo"
@@ -130,6 +136,14 @@ router.post('/cambiar-estado/:id', async (req, res) => {
   const result = await pool.query('SELECT * FROM alertas WHERE id=$1', [id]);
   const alertaActualizada = result.rows[0];
   await redisClient.set(`alerta:${id}`, JSON.stringify(alertaActualizada));
+  const lista = await redisClient.lRange('alertas', 0, -1);
+  for (let i = 0; i < lista.length; i++) {
+    const alerta = JSON.parse(lista[i]);
+    if (Number(alerta.id) === Number(id)) {
+      await redisClient.lSet('alertas', i, JSON.stringify(alertaActualizada));
+      break;
+    }
+  }
 
   res.json({ ok: true });
 })
