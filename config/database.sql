@@ -3,6 +3,7 @@ CREATE TABLE alertas (
     id_camara INTEGER NOT NULL REFERENCES camaras(id), -- FK a id de tabla camaras
     mensaje TEXT NOT NULL,
     hora_suceso TIMESTAMP NOT NULL,
+    tipo SMALLINT NOT NULL DEFAULT 0, -- Categorización de tipo de alerta, 0: "No especificado", 1: "Merodeo", 2: "Portonazo"...*se puede ir agregando mas si es necesario*
     score_confianza NUMERIC NOT NULL,
     id_clip INTEGER, -- Opcional, referencia el id del clip o video perteneciente a otra base de datos
     descripcion_suceso TEXT, -- Opcional
@@ -19,6 +20,7 @@ CREATE TABLE camaras (
     link_camara TEXT DEFAULT '' -- Opcional
 );
 
+-- Vista de tabla camara con el total de alertas de cada camara
 CREATE OR REPLACE VIEW camaras_con_alertas AS
 SELECT
     c.id,
