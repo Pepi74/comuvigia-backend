@@ -37,18 +37,18 @@ router.get('/', async (_, res) => {
 router.post('/nueva-alerta', async (req, res) => {
   const alerta = req.body;
 
-  const { id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso } = alerta;
+  const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso } = alerta;
   let result;
 
   if (descripcion_suceso) {
     result = await pool.query(
-      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso]
+      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso]
     );
   } else {
     result = await pool.query(
-      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, score_confianza) VALUES ($1, $2, $3, $4) RETURNING *`,
-      [id_camara, mensaje, hora_suceso, score_confianza]
+      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [id_camara, mensaje, hora_suceso, tipo, score_confianza]
     );
   }
 
