@@ -37,18 +37,18 @@ router.get('/', async (_, res) => {
 router.post('/nueva-alerta', async (req, res) => {
   const alerta = req.body;
 
-  const { id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso } = alerta;
+  const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso } = alerta;
   let result;
 
   if (descripcion_suceso) {
     result = await pool.query(
-      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso]
+      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso]
     );
   } else {
     result = await pool.query(
-      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, score_confianza) VALUES ($1, $2, $3, $4) RETURNING *`,
-      [id_camara, mensaje, hora_suceso, score_confianza]
+      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [id_camara, mensaje, hora_suceso, tipo, score_confianza]
     );
   }
 
@@ -97,7 +97,7 @@ router.get('/no-vistas', async (_, res) => {
   }
 });
 
-// --- Enviar últimas alertas ---
+// --- Enviar últimas 100 alertas ---
 router.get('/ultimas', async (_, res) => {
   const ultimas = await redisClient.lRange('alertas', 0, 99);
   const alertas = ultimas.map(JSON.parse);
@@ -105,7 +105,6 @@ router.get('/ultimas', async (_, res) => {
 });
 
 // --- Marcar alertas como vistas ---
-// TODO: Actualizar "alertas" de Redis o ver otra forma para utilizar el endpoint /ultimas
 router.post('/marcar-vista/:id', async (req, res) => {
   const id = req.params.id;
   const estado = req.body.estado; // 1 -> "Confirmada", 2 -> "Falso Positivo"
@@ -116,12 +115,19 @@ router.post('/marcar-vista/:id', async (req, res) => {
   const result = await pool.query('SELECT * FROM alertas WHERE id=$1', [id]);
   const alertaActualizada = result.rows[0];
   await redisClient.set(`alerta:${id}`, JSON.stringify(alertaActualizada));
+  const lista = await redisClient.lRange('alertas', 0, -1);
+  for (let i = 0; i < lista.length; i++) {
+    const alerta = JSON.parse(lista[i]);
+    if (Number(alerta.id) === Number(id)) {
+      await redisClient.lSet('alertas', i, JSON.stringify(alertaActualizada));
+      break;
+    }
+  }
 
   res.json({ ok: true });
 });
 
 // Modificar estado de alerta
-// TODO: Actualizar "alertas" de Redis o ver otra forma para utilizar el endpoint /ultimas
 router.post('/cambiar-estado/:id', async (req, res) => {
   const id = req.params.id;
   const estado = req.body.estado; // 1 -> "Confirmada", 2 -> "Falso Positivo"
@@ -130,6 +136,14 @@ router.post('/cambiar-estado/:id', async (req, res) => {
   const result = await pool.query('SELECT * FROM alertas WHERE id=$1', [id]);
   const alertaActualizada = result.rows[0];
   await redisClient.set(`alerta:${id}`, JSON.stringify(alertaActualizada));
+  const lista = await redisClient.lRange('alertas', 0, -1);
+  for (let i = 0; i < lista.length; i++) {
+    const alerta = JSON.parse(lista[i]);
+    if (Number(alerta.id) === Number(id)) {
+      await redisClient.lSet('alertas', i, JSON.stringify(alertaActualizada));
+      break;
+    }
+  }
 
   res.json({ ok: true });
 })
@@ -168,5 +182,26 @@ router.put('/editar-descripcion/:id', async (req, res) => {
     res.status(500).json({ error: 'Error actualizando la descripción' });
   }
 });
+
+// Obtener alertas por id de camara
+router.get('/camara/:id_camara', async (req, res) => {
+  const id_camara = req.params.id_camara
+  try {
+    const result = await pool.query('SELECT * FROM alertas WHERE id_camara = $1 ORDER BY hora_suceso DESC', [id_camara])
+    const alerts = result.rows
+    const cleanAlerts = alerts.map(alert => {
+        const cleaned = {}
+        for (const key in alert) {
+            if (alert[key] !== null) cleaned[key] = alert[key]            
+        }
+        return cleaned
+    })
+
+    res.json(cleanAlerts)
+  } catch (error) {
+    console.error('Error al obtener alertas:', error)
+    res.status(500).send('Error en el servidor')
+  }
+})
 
 export default router
