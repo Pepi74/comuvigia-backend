@@ -1,3 +1,13 @@
+CREATE TABLE camaras (
+    id SERIAL PRIMARY KEY, -- Puede ser definida como id_camara
+    nombre TEXT NOT NULL,
+    posicion DOUBLE PRECISION[] NOT NULL, -- Arreglo con valores latitud y longitud.
+    direccion TEXT NOT NULL,
+    estado_camara BOOLEAN NOT NULL DEFAULT TRUE,
+    ultima_conexion TIMESTAMP NOT NULL,
+    link_camara TEXT DEFAULT '' -- Opcional
+);
+
 CREATE TABLE alertas (
     id SERIAL PRIMARY KEY, -- Puede ser definida como id_alerta
     id_camara INTEGER NOT NULL REFERENCES camaras(id), -- FK a id de tabla camaras
@@ -8,16 +18,6 @@ CREATE TABLE alertas (
     id_clip INTEGER, -- Opcional, referencia el id del clip o video perteneciente a otra base de datos
     descripcion_suceso TEXT, -- Opcional
     estado SMALLINT NOT NULL DEFAULT 0 -- Estado de alerta, 0: "En Observación", 1: "Confirmada", 2: "Falso Positivo"
-);
-
-CREATE TABLE camaras (
-    id SERIAL PRIMARY KEY, -- Puede ser definida como id_camara
-    nombre TEXT NOT NULL,
-    posicion DOUBLE PRECISION[] NOT NULL, -- Arreglo con valores latitud y longitud.
-    direccion TEXT NOT NULL,
-    estado_camara BOOLEAN NOT NULL DEFAULT TRUE,
-    ultima_conexion TIMESTAMP NOT NULL,
-    link_camara TEXT DEFAULT '' -- Opcional
 );
 
 -- Vista de tabla camara con el total de alertas de cada camara

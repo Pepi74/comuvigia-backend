@@ -1,11 +1,13 @@
-from flask import Flask, Response
+from flask import Flask, Response, jsonify
 import cv2
 import numpy as np
 import logging
 from threading import Thread, Lock
 import time
+from datetime import datetime
 
 app = Flask(__name__)
+start_time = time.time()
 
 # configuracion
 RTSP_URL = "rtsp://prueba:12341234@host.docker.internal:8554/live"
@@ -99,6 +101,16 @@ def generate_frames():
 def video_feed():
     return Response(generate_frames(),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/health')
+def health_check():
+    health_status = {
+        "status": "healthy",
+        "service": "video_streaming",
+        "timestamp": datetime.now().isoformat(),
+        "uptime_seconds": round(time.time() - start_time, 2)
+    }
+    return jsonify(health_status), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=FLASK_PORT, threaded=True)
