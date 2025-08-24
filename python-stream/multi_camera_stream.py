@@ -1,3 +1,4 @@
+import tarfile
 from flask import Flask, Response, jsonify, request
 import cv2
 import numpy as np
@@ -7,12 +8,16 @@ import time
 from datetime import datetime
 import boto3
 from botocore.client import Config
-import io
+from io import BytesIO
 import json
 import uuid
 from pathlib import Path
+import requests
+import os
+from video_reconstructor import video_bp
 
 app = Flask(__name__)
+app.register_blueprint(video_bp, url_prefix='/api')
 start_time = time.time()
 
 # Configuración
@@ -30,22 +35,40 @@ S3_BUCKET_NAME = "comuvigia-video-batches"
 S3_REGION = "us-east-1"
 
 # Configuración de cámaras / luego que vengan de una api
-CAMERAS = {
+'''CAMERAS = {
     "cam1": {
-        "rtsp_url": "rtsp://prueba:12341234@host.docker.internal:8554/live",
-        "output_size": (640, 360),
-        "enabled": True
+        "link_camara": "rtsp://prueba:12341234@host.docker.internal:8554/live",
+        "estado_camara": True
     }
     # Agrega más cámaras aquí
-}
+}'''
+url = "http://backend:3000/api/camaras"
+
+payload = {}
+headers = {}
+
+response = requests.request("GET", url, headers=headers, data=payload)
+
+print(response.text)
+CAMERAS = json.loads(response.text)
 
 # Logs
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger(__name__)
+os.makedirs("/logs", exist_ok=True)
+from logging.handlers import RotatingFileHandler
+
+logger = logging.getLogger("multi_camera_stream")
+logger.setLevel(logging.INFO)
+
+fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S')
+
+fh = RotatingFileHandler("/logs/multi_camera_stream.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+fh.setFormatter(fmt)
+logger.addHandler(fh)
+
+ch = logging.StreamHandler()
+ch.setFormatter(fmt)
+logger.addHandler(ch)
 
 class S3Client:
     def __init__(self):
@@ -75,51 +98,82 @@ class S3Client:
             self.connected = False
     
     def upload_batch(self, camera_id, frames, timestamp):
-        if not self.connected:
-            self.connect()
-            if not self.connected:
-                return False
-        
         try:
-            # Crear archivo comprimido con los frames
-            batch_data = {
-                "camera_id": camera_id,
+            if not frames:
+                logger.warning(f"Cámara {camera_id}: No hay frames para guardar")
+                return False
+            # Crear metadata con información crucial
+            metadata = {
+                "camera_id": str(camera_id),
                 "timestamp": timestamp.isoformat(),
                 "frames_count": len(frames),
-                "frames": []
+                "resolution": f"{frames[0].shape[1]}x{frames[0].shape[0]}",
+                "fps": MAX_FPS,
+                "codec": "h264",
+                "version": "1.0"
             }
             
-            # Convertir frames a base64 o guardar como imágenes individuales
-            for i, frame in enumerate(frames):
-                _, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-                batch_data["frames"].append({
-                    "index": i,
-                    "data": jpeg.tobytes().hex()  # Guardar como hexadecimal
-                })
+            # Crear archivo tar con frames individuales
+            tar_buffer = BytesIO()
+            
+            with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
+                # Agregar metadata
+                metadata_json = json.dumps(metadata)
+                metadata_bytes = metadata_json.encode('utf-8')
+                metadata_info = tarfile.TarInfo("metadata.json")
+                metadata_info.size = len(metadata_bytes)
+                tar.addfile(metadata_info, BytesIO(metadata_bytes))
+                
+                # Agregar frames como archivos JPEG individuales
+                for i, frame in enumerate(frames):
+                    # Verificar que el frame sea válido
+                    if frame is None or not isinstance(frame, np.ndarray):
+                        logger.warning(f"Cámara {camera_id}: Frame {i} inválido, omitiendo")
+                        continue
+                        
+                    try:
+                        _, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                        if jpeg is None:
+                            continue
+                            
+                        frame_bytes = jpeg.tobytes()
+                        frame_info = tarfile.TarInfo(f"frame_{i:06d}.jpg")
+                        frame_info.size = len(frame_bytes)
+                        tar.addfile(frame_info, BytesIO(frame_bytes))
+                        
+                    except Exception as e:
+                        logger.error(f"Cámara {camera_id}: Error procesando frame {i}: {str(e)}")
+                        continue
             
             # Subir a S3
-            batch_id = f"{camera_id}_{timestamp.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-            key = f"batches/{camera_id}/{timestamp.strftime('%Y/%m/%d')}/{batch_id}.json"
+            tar_buffer.seek(0)
+            date_path = timestamp.strftime('%Y/%m/%d/%H')
+            batch_id = f"{camera_id}_{timestamp.strftime('%Y%m%d_%H%M%S')}"
+            key = f"batches/{camera_id}/{date_path}/{batch_id}.tar.gz"
             
+            s3_metadata = {k: str(v) for k, v in metadata.items()} 
+
             self.client.put_object(
                 Bucket=S3_BUCKET_NAME,
                 Key=key,
-                Body=json.dumps(batch_data),
-                ContentType='application/json'
+                Body=tar_buffer.getvalue(),
+                ContentType='application/gzip',
+                Metadata=s3_metadata  # Metadata adicional para S3
             )
-            
-            logger.info(f"Batch subido: {key} con {len(frames)} frames")
+            size_mb = len(tar_buffer.getvalue()) / (1024 * 1024)
+            logger.info(f"Cámara {camera_id}: Batch subido {key} - {size_mb:.2f} MB")
             return True
             
         except Exception as e:
-            logger.error(f"Error subiendo batch a S3: {str(e)}")
+            logger.error(f"Cámara {camera_id}: Error subiendo batch optimizado: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())  # ← Para más detalles del error
             return False
 
 class VideoStream:
-    def __init__(self, camera_id, rtsp_url, output_size):
+    def __init__(self, camera_id, link_camara):
         self.camera_id = camera_id
-        self.rtsp_url = rtsp_url
-        self.output_size = output_size
+        self.link_camara = link_camara
         self.frame = None
         self.lock = Lock()
         self.running = False
@@ -135,7 +189,7 @@ class VideoStream:
         logger.info(f"Stream de cámara {self.camera_id} iniciado")
 
     def update(self):
-        cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+        cap = cv2.VideoCapture(self.link_camara, cv2.CAP_FFMPEG)
         #cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # buffer min
         cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY) #gpu
         
@@ -146,11 +200,11 @@ class VideoStream:
                     logger.warning(f"Cámara {self.camera_id}: Frame vacío - reconectando...")
                     time.sleep(1)
                     cap.release()
-                    cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+                    cap = cv2.VideoCapture(self.link_camara, cv2.CAP_FFMPEG)
                     continue
 
                 # Procesamiento
-                processed_frame = cv2.resize(frame, self.output_size)
+                processed_frame = cv2.resize(frame, DEFAULT_OUTPUT_SIZE)
                 
                 with self.lock:
                     self.frame = processed_frame
@@ -201,12 +255,18 @@ class VideoStream:
 
 # Inicializar streams para todas las cámaras
 video_streams = {}
-for cam_id, config in CAMERAS.items():
-    if config["enabled"]:
+if isinstance(CAMERAS, str):
+    cameras_data = json.loads(CAMERAS)
+else:
+    cameras_data = CAMERAS
+for camera in cameras_data:
+    cam_id = camera["id"]
+    config = camera
+    
+    if config["estado_camara"] and config["link_camara"]:  # Verificar que tenga link
         video_streams[cam_id] = VideoStream(
             cam_id, 
-            config["rtsp_url"], 
-            config["output_size"]
+            config["link_camara"], 
         )
         video_streams[cam_id].start()
 
@@ -250,13 +310,59 @@ def video_feed(camera_id):
 @app.route('/cameras')
 def list_cameras():
     cameras_list = []
-    for cam_id, config in CAMERAS.items():
+    if isinstance(CAMERAS, str):
+        cameras_data = json.loads(CAMERAS)
+    else:
+        cameras_data = CAMERAS
+    
+    for camera in cameras_data:
         cameras_list.append({
-            "id": cam_id,
-            "enabled": config["enabled"],
-            "output_size": config["output_size"]
+            "id": camera["id"],
+            "estado_camara": camera["estado_camara"],
+            "nombre": camera["nombre"],
+            "posicion": camera["posicion"],
+            "direccion": camera["direccion"],
+            "estado_camara": camera["estado_camara"]
         })
     return jsonify(cameras_list)
+
+@app.route('/api/video/preview/<camera_id>')
+def video_preview(camera_id):
+    """Obtener preview de los últimos frames"""
+    try:
+        # Buscar el batch más reciente
+        end_time = datetime.now()
+        start_time = end_time - timedelta(minutes=5)
+        
+        batches = video_reconstructor._find_batches_in_range(camera_id, start_time, end_time)
+        
+        if not batches:
+            return jsonify({"error": "No hay datos recientes"}), 404
+        
+        # Tomar el batch más reciente
+        latest_batch = batches[-1]
+        
+        # Extraer primer frame para preview
+        response = s3_client.get_object(
+            Bucket=S3_BUCKET_NAME,
+            Key=latest_batch['key']
+        )
+        
+        tar_bytes = BytesIO(response['Body'].read())
+        
+        with tarfile.open(fileobj=tar_bytes, mode='r:gz') as tar:
+            frame_files = [m for m in tar.getmembers() if m.name.startswith('frame_')]
+            if frame_files:
+                first_frame = frame_files[0]
+                frame_data = tar.extractfile(first_frame).read()
+                
+                # Devolver como imagen
+                return Response(frame_data, mimetype='image/jpeg')
+        
+        return jsonify({"error": "No se pudo obtener preview"}), 404
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 @app.route('/health')
 def health_check():

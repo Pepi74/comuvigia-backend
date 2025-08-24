@@ -4,3 +4,4 @@ imageio-ffmpeg
 numpy
 boto3
 botocore
+requests
