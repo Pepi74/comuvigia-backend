@@ -5,7 +5,7 @@ import numpy as np
 import logging
 from threading import Thread, Lock
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import boto3
 from botocore.client import Config
 from io import BytesIO
@@ -14,10 +14,10 @@ import uuid
 from pathlib import Path
 import requests
 import os
-from video_reconstructor import video_bp
+from video_reconstructor import video_bp, video_reconstructor
 
 app = Flask(__name__)
-app.register_blueprint(video_bp, url_prefix='/api')
+app.register_blueprint(video_bp, url_prefix='/')
 start_time = time.time()
 
 # Configuración
@@ -326,7 +326,7 @@ def list_cameras():
         })
     return jsonify(cameras_list)
 
-@app.route('/api/video/preview/<camera_id>')
+@app.route('/video_feed/preview/<camera_id>')
 def video_preview(camera_id):
     """Obtener preview de los últimos frames"""
     try:
@@ -343,7 +343,7 @@ def video_preview(camera_id):
         latest_batch = batches[-1]
         
         # Extraer primer frame para preview
-        response = s3_client.get_object(
+        response = S3Client.get_object(
             Bucket=S3_BUCKET_NAME,
             Key=latest_batch['key']
         )
