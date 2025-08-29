@@ -206,15 +206,52 @@ def reconstruct_video():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-@video_bp.route('/video/batches/<camera_id>')
+    
+@video_bp.route('/videos/batches/<camera_id>')
 def list_available_batches(camera_id):
-    """Listar batches disponibles para una cámara"""
+    """Listar videos disponibles para una cámara con filtros de fecha y paginación"""
     try:
-        # Listar últimos 7 días por defecto
-        end_time = datetime.now()
-        start_time = end_time - timedelta(days=7)
+        # Obtener parámetros de la query string
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 10, type=int)
         
-        batches = video_reconstructor._find_batches_in_range(camera_id, start_time, end_time)
+        # Validar parámetros de paginación
+        if page < 1:
+            return jsonify({"error": "El número de página debe ser al menos 1"}), 400
+        if per_page < 1 or per_page > 100:
+            return jsonify({"error": "El tamaño de página debe estar entre 1 y 100"}), 400
+        
+        # Si no se proporcionan fechas, usar últimos 7 días por defecto
+        if not start_date_str or not end_date_str:
+            end_time = datetime.now()
+            start_time = end_time - timedelta(days=7)
+        else:
+            # Parsear las fechas proporcionadas
+            try:
+                start_time = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
+                end_time = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+            except ValueError:
+                return jsonify({"error": "Formato de fecha inválido. Use formato ISO (YYYY-MM-DDTHH:MM:SS)"}), 400
+        
+        # Validar que la fecha de inicio no sea mayor que la fecha de fin
+        if start_time > end_time:
+            return jsonify({"error": "La fecha de inicio no puede ser mayor que la fecha de fin"}), 400
+        
+        # Limitar el rango de búsqueda a un máximo de 7 días por seguridad/rendimiento
+        max_days = 7
+        if (end_time - start_time).days > max_days:
+            return jsonify({"error": f"El rango de búsqueda no puede exceder {max_days} días"}), 400
+        
+        # Obtener todos los batches en el rango
+        all_batches = video_reconstructor._find_batches_in_range(camera_id, start_time, end_time)
+        
+        # Aplicar paginación
+        total = len(all_batches)
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        paginated_batches = all_batches[start_idx:end_idx]
         
         return jsonify({
             "camera_id": camera_id,
@@ -222,12 +259,309 @@ def list_available_batches(camera_id):
                 "time": batch['time'].isoformat(),
                 "size_mb": round(batch['size'] / (1024 * 1024), 2),
                 "key": batch['key']
-            } for batch in batches],
+            } for batch in paginated_batches],
             "time_range": {
                 "start": start_time.isoformat(),
                 "end": end_time.isoformat()
+            },
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "pages": (total + per_page - 1) // per_page  # Cálculo de total de páginas
             }
         })
         
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+    
+
+# video_reconstructor.py (parte adicional)
+@video_bp.route('/video/list/<camera_id>')
+def list_virtual_videos(camera_id):
+    """Listar videos virtuales basados en batches disponibles"""
+    try:
+        # Obtener parámetros de la query string
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 10, type=int)
+        video_duration_min = request.args.get('duration_min', 5, type=int)
+        
+        # Validar parámetros
+        if page < 1:
+            return jsonify({"error": "El número de página debe ser al menos 1"}), 400
+        if per_page < 1 or per_page > 100:
+            return jsonify({"error": "El tamaño de página debe estar entre 1 y 100"}), 400
+        if video_duration_min < 1 or video_duration_min > 60:
+            return jsonify({"error": "La duración debe estar entre 1 y 60 minutos"}), 400
+        
+        # Parsear fechas
+        if not start_date_str or not end_date_str:
+            end_time = datetime.now()
+            start_time = end_time - timedelta(days=7)
+        else:
+            try:
+                start_time = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
+                end_time = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+            except ValueError:
+                return jsonify({"error": "Formato de fecha inválido. Use formato ISO"}), 400
+        
+        # Validaciones de fecha
+        if start_time > end_time:
+            return jsonify({"error": "La fecha de inicio no puede ser mayor que la fecha de fin"}), 400
+        
+        max_days = 7
+        if (end_time - start_time).days > max_days:
+            return jsonify({"error": f"El rango de búsqueda no puede exceder {max_days} días"}), 400
+        
+        # Obtener batches disponibles en el rango usando tu método existente
+        batches = video_reconstructor._find_batches_in_range(camera_id, start_time, end_time)
+        logger.info(f"Se encontraron {len(batches)} batches para la cámara {camera_id} en el rango especificado")
+        # Agrupar batches en segmentos de video virtuales
+        virtual_videos = create_virtual_videos_from_batches(batches, video_duration_min * 60)
+        logger.info(f"Se encontraron {len(virtual_videos)} videos virtuales para la cámara {camera_id}")
+        # Aplicar paginación
+        total = len(virtual_videos)
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        paginated_videos = virtual_videos[start_idx:end_idx]
+        
+        return jsonify({
+            "camera_id": camera_id,
+            "videos": paginated_videos,
+            "time_range": {
+                "start": start_time.isoformat(),
+                "end": end_time.isoformat()
+            },
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "pages": (total + per_page - 1) // per_page
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error en list_virtual_videos: {str(e)}")
+        return jsonify({"error": str(e)}), 400
+
+
+def create_virtual_videos_from_batches(batches, target_duration_seconds):
+    """Agrupar batches en segmentos de video virtuales usando tu estructura de batches"""
+    if not batches:
+        return []
+    
+    # Ordenar batches por tiempo (ya viene ordenado de tu método)
+    virtual_videos = []
+    
+    # Si no hay batches, retornar vacío
+    if not batches:
+        return virtual_videos
+    
+    current_video_start = batches[0]['time']
+    current_video_batches = []
+    current_duration = 0
+    
+    for batch in batches:
+        batch_time = batch['time']
+        
+        # Estimar duración del batch (1MB ≈ 10 segundos de video)
+        batch_duration = estimate_batch_duration(batch)
+        
+        # Si agregar este batch excede la duración objetivo, crear un nuevo video virtual
+        if current_duration + batch_duration > target_duration_seconds and current_video_batches:
+            virtual_videos.append(create_virtual_video_entry(
+                current_video_start, 
+                current_video_batches,
+                current_duration
+            ))
+            
+            # Reiniciar para el próximo video
+            current_video_start = batch_time
+            current_video_batches = [batch]
+            current_duration = batch_duration
+        else:
+            current_video_batches.append(batch)
+            current_duration += batch_duration
+    
+    # Agregar el último video
+    if current_video_batches:
+        virtual_videos.append(create_virtual_video_entry(
+            current_video_start, 
+            current_video_batches,
+            current_duration
+        ))
+    
+    return virtual_videos
+
+
+def estimate_batch_duration(batch):
+    """Estimar la duración de un batch basado en su tamaño"""
+    # Asumir 1 MB ≈ 10 segundos de video (ajusta según tu codec)
+    size_mb = batch['size'] / (1024 * 1024)
+    return min(max(size_mb * 10, 5), 300)  # Entre 5 y 300 segundos
+
+
+def create_virtual_video_entry(start_time, batches, duration_seconds):
+    """Crear entrada de video virtual"""
+    total_size = sum(batch['size'] for batch in batches)
+    end_time = start_time + timedelta(seconds=duration_seconds)
+    
+    # Obtener el último batch para el tiempo final preciso
+    if batches:
+        last_batch_time = batches[-1]['time']
+        # Ajustar end_time basado en el último batch + su duración estimada
+        end_time = last_batch_time + timedelta(seconds=estimate_batch_duration(batches[-1]))
+    
+    return {
+        "id": f"virtual_{start_time.strftime('%Y%m%d_%H%M%S')}_{int(duration_seconds)}",
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat(),
+        "duration_seconds": duration_seconds,
+        "size_mb": round(total_size / (1024 * 1024), 2),
+        "batch_count": len(batches),
+        "batches": [batch['key'] for batch in batches],
+        "type": "virtual"
+    }
+
+
+# Endpoint para generar thumbnail bajo demanda
+@video_bp.route('/video/thumbnail/<camera_id>')
+def generate_thumbnail_on_demand(camera_id):
+    """Generar thumbnail bajo demanda desde el primer frame de un batch"""
+    try:
+        time_str = request.args.get('time')
+        if not time_str:
+            return jsonify({"error": "Parámetro 'time' requerido"}), 400
+        
+        target_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+        
+        # Buscar batch más cercano al tiempo solicitado
+        batch = find_closest_batch(camera_id, target_time)
+        if not batch:
+            return jsonify({"error": "No se encontraron batches para el tiempo solicitado"}), 404
+        
+        # Generar thumbnail desde el batch
+        thumbnail_path = extract_thumbnail_from_batch(batch['key'])
+        
+        if not thumbnail_path:
+            return jsonify({"error": "No se pudo generar el thumbnail"}), 500
+        
+        return send_file(
+            thumbnail_path,
+            mimetype='image/jpeg',
+            as_attachment=False,
+            download_name=f"thumbnail_{camera_id}_{target_time.strftime('%Y%m%d_%H%M%S')}.jpg"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error generando thumbnail: {str(e)}")
+        return jsonify({"error": str(e)}), 400
+
+
+def find_closest_batch(camera_id, target_time):
+    """Encontrar el batch más cercano al tiempo especificado usando tu método existente"""
+    # Buscar batches en un rango de ±2 minutos
+    start_range = target_time - timedelta(minutes=2)
+    end_range = target_time + timedelta(minutes=2)
+    
+    batches = video_reconstructor._find_batches_in_range(camera_id, start_range, end_range)
+    if not batches:
+        return None
+    
+    # Encontrar el batch más cercano al tiempo objetivo
+    closest_batch = min(batches, key=lambda x: abs(x['time'] - target_time))
+    return closest_batch
+
+
+def extract_thumbnail_from_batch(batch_key):
+    """Extraer thumbnail desde un batch comprimido"""
+    try:
+        # Descargar batch
+        response = s3_client.get_object(
+            Bucket=S3_BUCKET_NAME,
+            Key=batch_key
+        )
+        
+        # Extraer tar.gz
+        tar_bytes = BytesIO(response['Body'].read())
+        
+        with tarfile.open(fileobj=tar_bytes, mode='r:gz') as tar:
+            # Buscar el primer frame
+            frame_files = [m for m in tar.getmembers() if m.name.startswith('frame_')]
+            if not frame_files:
+                return None
+                
+            frame_files.sort(key=lambda x: x.name)
+            first_frame = frame_files[0]
+            
+            # Extraer el primer frame
+            frame_data = tar.extractfile(first_frame).read()
+            frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
+            
+            if frame is None:
+                return None
+            
+            # Crear archivo temporal para el thumbnail
+            temp_thumb_path = os.path.join(tempfile.gettempdir(), f"thumb_{os.path.basename(batch_key)}.jpg")
+            
+            # Redimensionar si es muy grande (max 320x180)
+            height, width = frame.shape[:2]
+            if width > 320 or height > 180:
+                scale = min(320/width, 180/height)
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+                frame = cv2.resize(frame, (new_width, new_height))
+            
+            # Guardar como JPEG
+            cv2.imwrite(temp_thumb_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            
+            return temp_thumb_path
+            
+    except Exception as e:
+        logger.error(f"Error extrayendo thumbnail: {str(e)}")
+        return None
+
+# Agrega este endpoint a tu API Flask
+@video_bp.route('/video/download/<camera_id>', methods=['GET'])
+def download_video(camera_id):
+    """Descargar video para un rango de tiempo específico"""
+    try:
+        # Obtener parámetros de la query string
+        start_time_str = request.args.get('start_time')
+        end_time_str = request.args.get('end_time')
+        output_format = request.args.get('format', 'mp4')
+        
+        if not start_time_str or not end_time_str:
+            return jsonify({"error": "Se requieren start_time y end_time"}), 400
+        
+        # Parsear fechas
+        start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+        end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+        
+        # Validar que el rango sea razonable (max 1 hora)
+        max_duration = timedelta(hours=1)
+        if (end_time - start_time) > max_duration:
+            return jsonify({
+                "error": f"El rango no puede exceder {max_duration.total_seconds() / 60} minutos"
+            }), 400
+        
+        # Reconstruir el video
+        video_path, error = video_reconstructor.reconstruct_video(
+            camera_id, start_time, end_time, output_format
+        )
+        
+        if error:
+            return jsonify({"error": error}), 404        
+        # Enviar el archivo para descarga
+        return send_file(
+            video_path,
+            as_attachment=True,
+            download_name=f"{camera_id}_{start_time.strftime('%Y%m%d_%H%M')}_{end_time.strftime('%H%M')}.{output_format}",
+            mimetype=f"video/{output_format}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error descargando video: {str(e)}")
+        return jsonify({"error": str(e)}), 500
