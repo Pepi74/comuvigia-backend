@@ -84,7 +84,7 @@ router.post('/nueva-alerta', async (req, res) => {
         if (s3Result.success) {
           // 3. Actualizar la alerta con la información de S3
           await pool.query(
-            `UPDATE alertas SET s3_key = $1 WHERE id = $2`,
+            `UPDATE alertas SET clip = $1 WHERE id = $2`,
             [s3Result.s3_info.key, nuevaAlerta.id]
           );
 
@@ -254,5 +254,143 @@ router.get('/camara/:id_camara', async (req, res) => {
     res.status(500).send('Error en el servidor')
   }
 })
+
+router.get('/estadisticas-totales', async (req, res) => {
+  let client;
+  try {
+    const { dias = 7, fecha_inicio, fecha_fin, group } = req.query;
+
+    let startDate, endDate;
+
+    if (fecha_inicio && fecha_fin) {
+      // Usar fechas proporcionadas
+      startDate = new Date(fecha_inicio);
+      endDate = new Date(fecha_fin);
+    } else {
+      // Usar el parámetro de días
+      endDate = new Date();
+      startDate = new Date();
+      startDate.setDate(startDate.getDate() - parseInt(dias));
+    }
+
+    // Formatear fechas para PostgreSQL
+    const fechaInicioStr = startDate.toISOString().replace('T', ' ').substring(0, 19);
+    const fechaFinStr = endDate.toISOString().replace('T', ' ').substring(0, 19);
+    let grupo; 
+    if(group != 'day' || group != 'week' || group != 'month'){
+      grupo = 'day'
+    }
+    else{
+      grupo = group;
+    }
+    client = await pool.connect();
+    console.log('Fecha inicio:', fechaInicioStr);
+    console.log('Fecha fin:', fechaFinStr);
+    console.log('Grupo:', grupo);
+    // Llamar a la función de PostgreSQL
+    const query = `
+      SELECT * FROM reporte_alertas_por_periodo($1, $2, $3)
+    `;
+
+    const result = await client.query(query, [fechaInicioStr, fechaFinStr, grupo]);
+    console.log('resultado query;', result)
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        periodo: {
+          fecha_inicio: fechaInicioStr,
+          fecha_fin: fechaFinStr,
+          dias: Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24))
+        },
+        estadisticas_totales: {
+          total_alertas: 0,
+          alertas_confirmadas: 0,
+          falsos_positivos: 0,
+          merodeos: 0,
+          portonazos: 0,
+          no_especificados: 0,
+          tasa_confianza: 0
+        },
+        sectores: []
+      });
+    }
+
+    // Calcular totales
+    const totales = {
+      total_alertas: 0,
+      alertas_confirmadas: 0,
+      falsos_positivos: 0,
+      merodeos: 0,
+      portonazos: 0,
+      no_especificados: 0
+    };
+
+    // Agrupar por sector
+    const sectores = {};
+    
+    result.rows.forEach(row => {
+      // Totales generales
+      totales.total_alertas += parseInt(row.total_alertas) || 0;
+      totales.alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
+      totales.falsos_positivos += parseInt(row.falsos_positivos) || 0;
+      totales.merodeos += parseInt(row.merodeos) || 0;
+      totales.portonazos += parseInt(row.portonazos) || 0;
+      totales.no_especificados += parseInt(row.no_especificados) || 0;
+
+      // Por sector
+      const sectorId = row.id_sector;
+      if (!sectores[sectorId]) {
+        sectores[sectorId] = {
+          id_sector: sectorId,
+          nombre_sector: row.nombre_sector,
+          total_alertas: 0,
+          alertas_confirmadas: 0,
+          falsos_positivos: 0,
+          merodeos: 0,
+          portonazos: 0,
+          no_especificados: 0
+        };
+      }
+
+      sectores[sectorId].total_alertas += parseInt(row.total_alertas) || 0;
+      sectores[sectorId].alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
+      sectores[sectorId].falsos_positivos += parseInt(row.falsos_positivos) || 0;
+      sectores[sectorId].merodeos += parseInt(row.merodeos) || 0;
+      sectores[sectorId].portonazos += parseInt(row.portonazos) || 0;
+      sectores[sectorId].no_especificados += parseInt(row.no_especificados) || 0;
+    });
+
+    // Calcular tasa de confianza
+    const tasaConfianza = totales.total_alertas > 0 
+      ? Math.round((totales.alertas_confirmadas / totales.total_alertas) * 100 * 100) / 100
+      : 0;
+
+    res.json({
+      success: true,
+      periodo: {
+        fecha_inicio: fechaInicioStr,
+        fecha_fin: fechaFinStr,
+        dias: Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24))
+      },
+      estadisticas_totales: {
+        ...totales,
+        tasa_confianza: tasaConfianza
+      },
+      sectores: Object.values(sectores)
+    });
+
+  } catch (err) {
+    console.error('Error en /estadisticas-totales:', err);
+    res.status(500).json({ 
+      success: false,
+      error: 'Error al obtener estadísticas totales',
+      detalle: err.message 
+    });
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+});
 
 export default router
