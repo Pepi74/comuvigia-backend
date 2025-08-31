@@ -1,3 +1,9 @@
+CREATE TABLE sectores (
+    id SERIAL PRIMARY KEY,
+    nombre_sector VARCHAR(100),
+    descripcion TEXT NOT NULL
+);
+
 CREATE TABLE camaras (
     id SERIAL PRIMARY KEY, -- Puede ser definida como id_camara
     nombre TEXT NOT NULL,
@@ -5,7 +11,7 @@ CREATE TABLE camaras (
     direccion TEXT NOT NULL,
     estado_camara BOOLEAN NOT NULL DEFAULT TRUE,
     ultima_conexion TIMESTAMP NOT NULL,
-    link_camara TEXT DEFAULT '' -- Opcional
+    link_camara TEXT DEFAULT '', -- Opcional
     id_sector SMALLINT REFERENCES sectores(id) -- FK a id de tabla sectores
 );
 
@@ -19,12 +25,6 @@ CREATE TABLE alertas (
     clip VARCHAR(100), -- Opcional, referencia a la ubicación del clip o video perteneciente a otra base de datos
     descripcion_suceso TEXT, -- Opcional
     estado SMALLINT NOT NULL DEFAULT 0 -- Estado de alerta, 0: "En Observación", 1: "Confirmada", 2: "Falso Positivo"
-);
-
-CREATE TABLE sectores (
-    id SERIAL PRIMARY KEY,
-    nombre_sector VARCHAR(100) ,
-    descripcion TEXT NOT NULL
 );
 
 CREATE TABLE tipos_alerta (
@@ -97,15 +97,14 @@ BEGIN
 END;
 $$;
 
+INSERT INTO sectores (nombre_sector, descripcion)
+VALUES
+    ('Sector Norte', 'Sector norte de la comuna.'),
+    ('Sector Sur', 'Sector sur de la comuna.'),
+    ('Sector Centro', 'Sector centro de la comuna.');
 
 INSERT INTO camaras (nombre, posicion, direccion, estado_camara, ultima_conexion, link_camara, id_sector)
 VALUES
     ('Cámara Plaza', '{-33.52, -70.603}', 'Avenida 123', TRUE, '2024-06-09 19:30:00', 'http://localhost:5000/video_feed', 3),
     ('Cámara Sur', '{-33.525, -70.6}', 'Avenida 123', FALSE, '2024-06-09 19:30:00', '', 3),
     ('Cámara Centro', '{-33.511, -70.59}', 'Avenida 123', FALSE, '2024-06-09 19:30:00', '', 2);
-
-INSERT INTO sectores (nombre_sector, descripcion)
-VALUES
-    ('Sector Norte', 'Sector norte de la comuna.'),
-    ('Sector Sur', 'Sector sur de la comuna.'),
-    ('Sector Centro', 'Sector centro de la comuna.');
