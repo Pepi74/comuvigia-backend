@@ -30,9 +30,9 @@ BATCH_INTERVAL = 5  # Segundos entre batches
 
 # Configuración S3
 S3_ENDPOINT = "http://minio:9000"  # Para MinIO local
-S3_ACCESS_KEY = "miniocomuvigia"
-S3_SECRET_KEY = "comuvigiaminio123"
-S3_BUCKET_NAME = "comuvigia-video-batches"
+S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
+S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
+S3_BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
 S3_REGION = "us-east-1"
 
 # Configuración de cámaras / luego que vengan de una api
