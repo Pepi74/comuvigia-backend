@@ -1,5 +1,4 @@
 import tarfile
-from flask import Flask, Response, jsonify, request
 import cv2
 import numpy as np
 import logging
@@ -14,6 +13,8 @@ import uuid
 from pathlib import Path
 import requests
 import os
+import base64
+from flask import Flask, Response, jsonify, request
 from video_reconstructor import video_bp, video_reconstructor
 
 app = Flask(__name__)
@@ -97,13 +98,13 @@ class S3Client:
             logger.error(f"Error conectando a S3: {str(e)}")
             self.connected = False
     
-    def upload_batch(self, camera_id, frames, timestamp):
+    def upload_batch(self, camera_id, frames, timestamp, custom_metadata=None, flag=False):
         try:
             if not frames:
                 logger.warning(f"Cámara {camera_id}: No hay frames para guardar")
                 return False
             # Crear metadata con información crucial
-            metadata = {
+            base_metadata  = {
                 "camera_id": str(camera_id),
                 "timestamp": timestamp.isoformat(),
                 "frames_count": len(frames),
@@ -112,6 +113,12 @@ class S3Client:
                 "codec": "h264",
                 "version": "1.0"
             }
+
+            # Fusionar con metadata personalizada si existe
+            if custom_metadata:
+                metadata = {**base_metadata, **custom_metadata}
+            else:
+                metadata = base_metadata
             
             # Crear archivo tar con frames individuales
             tar_buffer = BytesIO()
@@ -149,7 +156,10 @@ class S3Client:
             tar_buffer.seek(0)
             date_path = timestamp.strftime('%Y/%m/%d/%H')
             batch_id = f"{camera_id}_{timestamp.strftime('%Y%m%d_%H%M%S')}"
-            key = f"batches/{camera_id}/{date_path}/{batch_id}.tar.gz"
+            if(flag):
+                key = f"clips/{camera_id}/{date_path}/{batch_id}.tar.gz"
+            else:
+                key = f"batches/{camera_id}/{date_path}/{batch_id}.tar.gz"
             
             s3_metadata = {k: str(v) for k, v in metadata.items()} 
 
@@ -162,12 +172,20 @@ class S3Client:
             )
             size_mb = len(tar_buffer.getvalue()) / (1024 * 1024)
             logger.info(f"Cámara {camera_id}: Batch subido {key} - {size_mb:.2f} MB")
-            return True
+            return {
+                'key': key,
+                'bucket': S3_BUCKET_NAME,
+                'size_mb': size_mb,
+                'frames_count': len(frames),
+                'timestamp': timestamp.isoformat(),
+                's3_url': f"{S3_ENDPOINT}/{S3_BUCKET_NAME}/{key}",
+                'metadata': metadata
+            }
             
         except Exception as e:
             logger.error(f"Cámara {camera_id}: Error subiendo batch optimizado: {str(e)}")
             import traceback
-            logger.error(traceback.format_exc())  # ← Para más detalles del error
+            logger.error(traceback.format_exc())
             return False
 
 class VideoStream:
@@ -382,6 +400,196 @@ def manage_config():
         # Aca agregar logica para actualizar configuracion
         return jsonify({"message": "Configuración actualizada"}), 200
     return jsonify(CAMERAS)
+
+# APIs para guardar frames desde servicio de inteligencia artificial
+@app.route('/save-frames', methods=['POST'])
+def save_frames():
+    """
+    API para guardar frames en el bucket S3/MinIO
+    Soporta múltiples formatos: base64, bytes, o frames ya procesados
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No se proporcionaron datos JSON'}), 400
+        
+        # Verificar campos obligatorios
+        required_fields = ['camera_id', 'frames']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Campo requerido faltante: {field}'}), 400
+        
+        camera_id = data['camera_id']
+        frames_data = data['frames']
+        metadata = data.get('metadata', {})
+        
+        # Procesar los frames
+        processed_frames = []
+        
+        for frame_data in frames_data:
+            frame = None
+            
+            # Diferentes formatos de frame
+            if isinstance(frame_data, str) and frame_data.startswith('data:image'):
+                # Base64 con header data:image
+                frame = decode_base64_frame(frame_data)
+            elif isinstance(frame_data, str):
+                # Base64 simple
+                frame = decode_base64_simple(frame_data)
+            elif isinstance(frame_data, dict) and 'image_data' in frame_data:
+                # Formato estructurado
+                frame = decode_structured_frame(frame_data)
+            else:
+                return jsonify({'error': 'Formato de frame no soportado'}), 400
+            
+            if frame is not None:
+                processed_frames.append(frame)
+        
+        if not processed_frames:
+            return jsonify({'error': 'No se pudieron procesar los frames'}), 400
+        
+        # Agregar metadata adicional
+        full_metadata = {
+            **metadata,
+            'source': 'api-save-frames',
+            'received_timestamp': datetime.now().isoformat(),
+            'frames_count': len(processed_frames),
+            'camera_id': camera_id
+        }
+        
+        # Usar tu S3Client existente para subir el batch
+        timestamp = datetime.now()
+        success = S3Client.upload_batch(camera_id, processed_frames, timestamp, full_metadata, True)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'{len(processed_frames)} frames guardados exitosamente',
+                's3_info': {
+                    'key': success['key'],
+                    'bucket': success['bucket'],
+                    's3_url': success['s3_url'],
+                    'size_mb': success['size_mb'],
+                    'frames_count': success['frames_count'],
+                    'timestamp': success['timestamp']
+                },
+                'metadata': success['metadata'],
+                'camera_id': camera_id
+            }), 200
+        else:
+            return jsonify({'error': 'Error al subir frames a S3'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error en API save-frames: {str(e)}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
+
+@app.route('/api/save-single-frame', methods=['POST'])
+def save_single_frame():
+    """
+    API para guardar un solo frame y retornar el key
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No se proporcionaron datos JSON'}), 400
+        
+        required_fields = ['camera_id', 'frame_data']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Campo requerido faltante: {field}'}), 400
+        
+        camera_id = data['camera_id']
+        frame_data = data['frame_data']
+        metadata = data.get('metadata', {})
+        
+        # Decodificar el frame
+        frame = None
+        
+        if isinstance(frame_data, str) and frame_data.startswith('data:image'):
+            frame = decode_base64_frame(frame_data)
+        elif isinstance(frame_data, str):
+            frame = decode_base64_simple(frame_data)
+        elif isinstance(frame_data, dict) and 'image_data' in frame_data:
+            frame = decode_structured_frame(frame_data)
+        
+        if frame is None:
+            return jsonify({'error': 'No se pudo decodificar el frame'}), 400
+        
+        # Crear un batch con un solo frame
+        processed_frames = [frame]
+        
+        full_metadata = {
+            **metadata,
+            'source': 'api-save-single-frame',
+            'received_timestamp': datetime.now().isoformat(),
+            'camera_id': camera_id
+        }
+        
+        # Subir a S3 y obtener información
+        timestamp = datetime.now()
+        upload_result = S3Client.upload_batch(camera_id, processed_frames, timestamp, full_metadata)
+        
+        if upload_result:
+            return jsonify({
+                'success': True,
+                'message': 'Frame guardado exitosamente',
+                's3_info': {
+                    'key': upload_result['key'],
+                    'bucket': upload_result['bucket'],
+                    's3_url': upload_result['s3_url'],
+                    'size_mb': upload_result['size_mb'],
+                    'frames_count': upload_result['frames_count'],
+                    'timestamp': upload_result['timestamp']
+                },
+                'metadata': upload_result['metadata'],
+                'camera_id': camera_id
+            }), 200
+        else:
+            return jsonify({'error': 'Error al subir frame a S3'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error en API save-single-frame: {str(e)}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
+
+def decode_base64_frame(base64_string):
+    """Decodifica frame en formato base64 con header data:image"""
+    try:
+        # Remover el header "data:image/jpeg;base64,"
+        if ',' in base64_string:
+            base64_string = base64_string.split(',')[1]
+        
+        image_data = base64.b64decode(base64_string)
+        nparr = np.frombuffer(image_data, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        return frame
+    except Exception as e:
+        logger.error(f"Error decodificando base64: {str(e)}")
+        return None
+
+def decode_base64_simple(base64_string):
+    """Decodifica base64 simple"""
+    try:
+        image_data = base64.b64decode(base64_string)
+        nparr = np.frombuffer(image_data, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        return frame
+    except Exception as e:
+        logger.error(f"Error decodificando base64 simple: {str(e)}")
+        return None
+
+def decode_structured_frame(frame_data):
+    """Decodifica frame en formato estructurado"""
+    try:
+        if 'image_data' in frame_data:
+            image_data = base64.b64decode(frame_data['image_data'])
+            nparr = np.frombuffer(image_data, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            return frame
+    except Exception as e:
+        logger.error(f"Error decodificando frame estructurado: {str(e)}")
+        return None
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=FLASK_PORT, threaded=True)

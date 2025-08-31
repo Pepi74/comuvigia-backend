@@ -34,36 +34,87 @@ router.get('/', async (_, res) => {
 })
   
 // --- Recibir alerta del servicio IA ---
+// En tu endpoint de nueva-alerta en Node.js
 router.post('/nueva-alerta', async (req, res) => {
-  const alerta = req.body;
+  try {
+    const alerta = req.body;
+    const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, frames } = alerta;
 
-  const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso } = alerta;
-  let result;
+    // 1. Primero insertar la alerta en la BD
+    let result;
+    if (descripcion_suceso) {
+      result = await pool.query(
+        `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso]
+      );
+    } else {
+      result = await pool.query(
+        `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [id_camara, mensaje, hora_suceso, tipo, score_confianza]
+      );
+    }
 
-  if (descripcion_suceso) {
-    result = await pool.query(
-      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso]
-    );
-  } else {
-    result = await pool.query(
-      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [id_camara, mensaje, hora_suceso, tipo, score_confianza]
-    );
+    const nuevaAlerta = result.rows[0];
+
+    // 2. Si hay frames, guardarlos en S3 y obtener el key
+    if (frames && frames.length > 0) {
+      try {
+        const metadata = {
+          alert_id: nuevaAlerta.id,
+          event_type: tipo,
+          confidence: score_confianza,
+          description: descripcion_suceso || mensaje
+        };
+
+        // Llamar a la API de Python para guardar frames
+        const response = await fetch('http://python-service:5000/save-frames', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            camera_id: id_camara,
+            frames: frames,
+            metadata: metadata
+          })
+        });
+
+        const s3Result = await response.json();
+
+        if (s3Result.success) {
+          // 3. Actualizar la alerta con la información de S3
+          await pool.query(
+            `UPDATE alertas SET s3_key = $1 WHERE id = $2`,
+            [s3Result.s3_info.key, nuevaAlerta.id]
+          );
+
+          // Actualizar el objeto de alerta con la info de S3
+          nuevaAlerta.s3_key = s3Result.s3_info.key;
+          nuevaAlerta.s3_bucket = s3Result.s3_info.bucket;
+          nuevaAlerta.frames_count = s3Result.s3_info.frames_count;
+          nuevaAlerta.s3_url = s3Result.s3_info.s3_url;
+        }
+      } catch (s3Error) {
+        console.error('Error guardando frames en S3:', s3Error);
+        // No guardar la alerta completa si hay error con los frames
+        res.status(500).json({ error: s3Error });
+      }
+    }
+
+    // 4. Guardar en Redis y emitir WebSocket
+    await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
+    await redisClient.set(`alerta:${nuevaAlerta.id}`, JSON.stringify(nuevaAlerta));
+    await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
+    await redisClient.lTrim('alertas', 0, 99);
+
+    io.emit('nueva-alerta', nuevaAlerta);
+
+    res.status(201).json(nuevaAlerta);
+
+  } catch (error) {
+    console.error('Error al procesar la alerta:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
   }
-
-  const nuevaAlerta = result.rows[0];
-
-  // Guardar en Redis
-  await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
-  await redisClient.set(`alerta:${nuevaAlerta.id}`, JSON.stringify(nuevaAlerta));
-  await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
-  await redisClient.lTrim('alertas', 0, 99);
-
-  // Emitir vía WebSocket
-  io.emit('nueva-alerta', nuevaAlerta);
-
-  res.status(201).json(nuevaAlerta);
 });
   
 // --- Enviar alertas no vistas ---
