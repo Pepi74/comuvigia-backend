@@ -1,4 +1,14 @@
 services:
+  retention:
+    build: ./python-retention
+    container_name: retention
+    env_file:
+      - .env
+    depends_on:
+      - minio
+    restart: unless-stopped
+    networks:
+      - default
   python-stream:
     build: ./python-stream
     container_name: python-stream
