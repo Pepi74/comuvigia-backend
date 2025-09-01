@@ -163,9 +163,9 @@ class VideoReconstructor:
 
 # Inicializar reconstructor
 S3_ENDPOINT = "http://minio:9000"
-S3_ACCESS_KEY = "miniocomuvigia"
-S3_SECRET_KEY = "comuvigiaminio123"
-S3_BUCKET_NAME = "comuvigia-video-batches"
+S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
+S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
+S3_BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
 S3_REGION = "us-east-1"
 s3_client = boto3.client(
     's3',
