@@ -276,13 +276,11 @@ router.get('/estadisticas-totales', async (req, res) => {
     // Formatear fechas para PostgreSQL
     const fechaInicioStr = startDate.toISOString().replace('T', ' ').substring(0, 19);
     const fechaFinStr = endDate.toISOString().replace('T', ' ').substring(0, 19);
+
     let grupo; 
-    if(group != 'day' || group != 'week' || group != 'month'){
-      grupo = 'day'
-    }
-    else{
-      grupo = group;
-    }
+    const gruposValidos = ['day', 'week', 'month'];
+    grupo = gruposValidos.includes(group) ? group : 'day';
+
     client = await pool.connect();
     console.log('Fecha inicio:', fechaInicioStr);
     console.log('Fecha fin:', fechaFinStr);
@@ -308,6 +306,7 @@ router.get('/estadisticas-totales', async (req, res) => {
           falsos_positivos: 0,
           merodeos: 0,
           portonazos: 0,
+          asaltos_hogar: 0,
           no_especificados: 0,
           tasa_confianza: 0
         },
@@ -322,6 +321,7 @@ router.get('/estadisticas-totales', async (req, res) => {
       falsos_positivos: 0,
       merodeos: 0,
       portonazos: 0,
+      asaltos_hogar: 0,
       no_especificados: 0
     };
 
@@ -336,7 +336,7 @@ router.get('/estadisticas-totales', async (req, res) => {
       totales.merodeos += parseInt(row.merodeos) || 0;
       totales.portonazos += parseInt(row.portonazos) || 0;
       totales.no_especificados += parseInt(row.no_especificados) || 0;
-
+      totales.asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
       // Por sector
       const sectorId = row.id_sector;
       if (!sectores[sectorId]) {
@@ -357,6 +357,7 @@ router.get('/estadisticas-totales', async (req, res) => {
       sectores[sectorId].falsos_positivos += parseInt(row.falsos_positivos) || 0;
       sectores[sectorId].merodeos += parseInt(row.merodeos) || 0;
       sectores[sectorId].portonazos += parseInt(row.portonazos) || 0;
+      sectores[sectorId].asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
       sectores[sectorId].no_especificados += parseInt(row.no_especificados) || 0;
     });
 

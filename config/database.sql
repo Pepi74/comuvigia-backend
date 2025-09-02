@@ -13,6 +13,7 @@ CREATE TABLE camaras (
     ultima_conexion TIMESTAMP NOT NULL,
     link_camara TEXT DEFAULT '', -- Opcional
     id_sector SMALLINT REFERENCES sectores(id) -- FK a id de tabla sectores
+    zona_interes TEXT
 );
 
 CREATE TABLE alertas (
