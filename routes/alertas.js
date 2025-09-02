@@ -282,16 +282,18 @@ router.get('/estadisticas-totales', async (req, res) => {
     grupo = gruposValidos.includes(group) ? group : 'day';
 
     client = await pool.connect();
-    console.log('Fecha inicio:', fechaInicioStr);
-    console.log('Fecha fin:', fechaFinStr);
-    console.log('Grupo:', grupo);
+    
+    //console.log('Fecha inicio:', fechaInicioStr);
+    //console.log('Fecha fin:', fechaFinStr);
+    //console.log('Grupo:', grupo);
+    
     // Llamar a la función de PostgreSQL
     const query = `
       SELECT * FROM reporte_alertas_por_periodo($1, $2, $3)
     `;
 
     const result = await client.query(query, [fechaInicioStr, fechaFinStr, grupo]);
-    console.log('resultado query;', result)
+    //console.log('resultado query;', result)
     if (result.rows.length === 0) {
       return res.json({
         success: true,
@@ -363,7 +365,25 @@ router.get('/estadisticas-totales', async (req, res) => {
 
     // Calcular tasa de confianza
     const tasaConfianza = totales.total_alertas > 0 
-      ? Math.round((totales.alertas_confirmadas / totales.total_alertas) * 100 * 100) / 100
+      ? Math.round((totales.alertas_confirmadas / totales.total_alertas) * 100 )
+      : 0;
+    
+    // Porcentaje de alertas que son verdaderas positivas (excluye falsos positivos del total)
+    const tasaPrecision = totales.total_alertas > 0 
+      ? Math.round((totales.alertas_confirmadas / (totales.total_alertas - totales.falsos_positivos)) * 100)
+      : 0;
+
+    // Porcentaje de alertas que fueron falsos positivos
+    const tasaFalsosPositivos = totales.total_alertas > 0 
+      ? Math.round((totales.falsos_positivos / totales.total_alertas) * 100)
+      : 0;
+
+    // Métrica compuesta que penaliza falsos positivos
+    const scoreCalidad = totales.total_alertas > 0 
+      ? Math.round((
+          (totales.alertas_confirmadas * 2) - // Doble peso a confirmadas
+          totales.falsos_positivos            // Penalización por falsos positivos
+        ) / (totales.total_alertas * 2) * 100) // Normalizado a 100
       : 0;
 
     res.json({
@@ -375,7 +395,10 @@ router.get('/estadisticas-totales', async (req, res) => {
       },
       estadisticas_totales: {
         ...totales,
-        tasa_confianza: tasaConfianza
+        tasa_confianza: tasaConfianza,
+        tasa_precision: tasaPrecision,
+        tasa_error: tasaFalsosPositivos,
+        score_calidad: scoreCalidad
       },
       sectores: Object.values(sectores)
     });
