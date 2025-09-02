@@ -10,7 +10,7 @@ app = Flask(__name__)
 start_time = time.time()
 
 # configuracion
-RTSP_URL = "rtsp://prueba:12341234@host.docker.internal:8554/live"
+RTSP_URL = "rtsp://admin:1234@169.254.11.172:554/live1.sdp" #"rtsp://prueba:12341234@host.docker.internal:8554/live"
 # RTSP_URL = "rtsp://prueba:12341234@localhost:8554/live"
 #RTSP_URL = "rtsp://admin:FOCGNT@camezviz.duckdns.org:8554/h264/ch1/main/av_stream"
 OUTPUT_SIZE = (640, 360)

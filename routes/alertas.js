@@ -34,36 +34,87 @@ router.get('/', async (_, res) => {
 })
   
 // --- Recibir alerta del servicio IA ---
+// En tu endpoint de nueva-alerta en Node.js
 router.post('/nueva-alerta', async (req, res) => {
-  const alerta = req.body;
+  try {
+    const alerta = req.body;
+    const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, frames } = alerta;
 
-  const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso } = alerta;
-  let result;
+    // 1. Primero insertar la alerta en la BD
+    let result;
+    if (descripcion_suceso) {
+      result = await pool.query(
+        `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso]
+      );
+    } else {
+      result = await pool.query(
+        `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [id_camara, mensaje, hora_suceso, tipo, score_confianza]
+      );
+    }
 
-  if (descripcion_suceso) {
-    result = await pool.query(
-      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso]
-    );
-  } else {
-    result = await pool.query(
-      `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [id_camara, mensaje, hora_suceso, tipo, score_confianza]
-    );
+    const nuevaAlerta = result.rows[0];
+
+    // 2. Si hay frames, guardarlos en S3 y obtener el key
+    if (frames && frames.length > 0) {
+      try {
+        const metadata = {
+          alert_id: nuevaAlerta.id,
+          event_type: tipo,
+          confidence: score_confianza,
+          description: descripcion_suceso || mensaje
+        };
+
+        // Llamar a la API de Python para guardar frames
+        const response = await fetch('http://python-service:5000/save-frames', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            camera_id: id_camara,
+            frames: frames,
+            metadata: metadata
+          })
+        });
+
+        const s3Result = await response.json();
+
+        if (s3Result.success) {
+          // 3. Actualizar la alerta con la información de S3
+          await pool.query(
+            `UPDATE alertas SET clip = $1 WHERE id = $2`,
+            [s3Result.s3_info.key, nuevaAlerta.id]
+          );
+
+          // Actualizar el objeto de alerta con la info de S3
+          nuevaAlerta.s3_key = s3Result.s3_info.key;
+          nuevaAlerta.s3_bucket = s3Result.s3_info.bucket;
+          nuevaAlerta.frames_count = s3Result.s3_info.frames_count;
+          nuevaAlerta.s3_url = s3Result.s3_info.s3_url;
+        }
+      } catch (s3Error) {
+        console.error('Error guardando frames en S3:', s3Error);
+        // No guardar la alerta completa si hay error con los frames
+        res.status(500).json({ error: s3Error });
+      }
+    }
+
+    // 4. Guardar en Redis y emitir WebSocket
+    await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
+    await redisClient.set(`alerta:${nuevaAlerta.id}`, JSON.stringify(nuevaAlerta));
+    await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
+    await redisClient.lTrim('alertas', 0, 99);
+
+    io.emit('nueva-alerta', nuevaAlerta);
+
+    res.status(201).json(nuevaAlerta);
+
+  } catch (error) {
+    console.error('Error al procesar la alerta:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
   }
-
-  const nuevaAlerta = result.rows[0];
-
-  // Guardar en Redis
-  await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
-  await redisClient.set(`alerta:${nuevaAlerta.id}`, JSON.stringify(nuevaAlerta));
-  await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
-  await redisClient.lTrim('alertas', 0, 99);
-
-  // Emitir vía WebSocket
-  io.emit('nueva-alerta', nuevaAlerta);
-
-  res.status(201).json(nuevaAlerta);
 });
   
 // --- Enviar alertas no vistas ---
@@ -203,5 +254,167 @@ router.get('/camara/:id_camara', async (req, res) => {
     res.status(500).send('Error en el servidor')
   }
 })
+
+router.get('/estadisticas-totales', async (req, res) => {
+  let client;
+  try {
+    const { dias = 7, fecha_inicio, fecha_fin, group } = req.query;
+
+    let startDate, endDate;
+
+    if (fecha_inicio && fecha_fin) {
+      // Usar fechas proporcionadas
+      startDate = new Date(fecha_inicio);
+      endDate = new Date(fecha_fin);
+    } else {
+      // Usar el parámetro de días
+      endDate = new Date();
+      startDate = new Date();
+      startDate.setDate(startDate.getDate() - parseInt(dias));
+    }
+
+    // Formatear fechas para PostgreSQL
+    const fechaInicioStr = startDate.toISOString().replace('T', ' ').substring(0, 19);
+    const fechaFinStr = endDate.toISOString().replace('T', ' ').substring(0, 19);
+
+    let grupo; 
+    const gruposValidos = ['day', 'week', 'month'];
+    grupo = gruposValidos.includes(group) ? group : 'day';
+
+    client = await pool.connect();
+    
+    //console.log('Fecha inicio:', fechaInicioStr);
+    //console.log('Fecha fin:', fechaFinStr);
+    //console.log('Grupo:', grupo);
+    
+    // Llamar a la función de PostgreSQL
+    const query = `
+      SELECT * FROM reporte_alertas_por_periodo($1, $2, $3)
+    `;
+
+    const result = await client.query(query, [fechaInicioStr, fechaFinStr, grupo]);
+    //console.log('resultado query;', result)
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        periodo: {
+          fecha_inicio: fechaInicioStr,
+          fecha_fin: fechaFinStr,
+          dias: Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24))
+        },
+        estadisticas_totales: {
+          total_alertas: 0,
+          alertas_confirmadas: 0,
+          falsos_positivos: 0,
+          merodeos: 0,
+          portonazos: 0,
+          asaltos_hogar: 0,
+          no_especificados: 0,
+          tasa_confianza: 0
+        },
+        sectores: []
+      });
+    }
+
+    // Calcular totales
+    const totales = {
+      total_alertas: 0,
+      alertas_confirmadas: 0,
+      falsos_positivos: 0,
+      merodeos: 0,
+      portonazos: 0,
+      asaltos_hogar: 0,
+      no_especificados: 0
+    };
+
+    // Agrupar por sector
+    const sectores = {};
+    
+    result.rows.forEach(row => {
+      // Totales generales
+      totales.total_alertas += parseInt(row.total_alertas) || 0;
+      totales.alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
+      totales.falsos_positivos += parseInt(row.falsos_positivos) || 0;
+      totales.merodeos += parseInt(row.merodeos) || 0;
+      totales.portonazos += parseInt(row.portonazos) || 0;
+      totales.no_especificados += parseInt(row.no_especificados) || 0;
+      totales.asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
+      // Por sector
+      const sectorId = row.id_sector;
+      if (!sectores[sectorId]) {
+        sectores[sectorId] = {
+          id_sector: sectorId,
+          nombre_sector: row.nombre_sector,
+          total_alertas: 0,
+          alertas_confirmadas: 0,
+          falsos_positivos: 0,
+          merodeos: 0,
+          portonazos: 0,
+          no_especificados: 0
+        };
+      }
+
+      sectores[sectorId].total_alertas += parseInt(row.total_alertas) || 0;
+      sectores[sectorId].alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
+      sectores[sectorId].falsos_positivos += parseInt(row.falsos_positivos) || 0;
+      sectores[sectorId].merodeos += parseInt(row.merodeos) || 0;
+      sectores[sectorId].portonazos += parseInt(row.portonazos) || 0;
+      sectores[sectorId].asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
+      sectores[sectorId].no_especificados += parseInt(row.no_especificados) || 0;
+    });
+
+    // Calcular tasa de confianza
+    const tasaConfianza = totales.total_alertas > 0 
+      ? Math.round((totales.alertas_confirmadas / totales.total_alertas) * 100 )
+      : 0;
+    
+    // Porcentaje de alertas que son verdaderas positivas (excluye falsos positivos del total)
+    const tasaPrecision = totales.total_alertas > 0 
+      ? Math.round((totales.alertas_confirmadas / (totales.total_alertas - totales.falsos_positivos)) * 100)
+      : 0;
+
+    // Porcentaje de alertas que fueron falsos positivos
+    const tasaFalsosPositivos = totales.total_alertas > 0 
+      ? Math.round((totales.falsos_positivos / totales.total_alertas) * 100)
+      : 0;
+
+    // Métrica compuesta que penaliza falsos positivos
+    const scoreCalidad = totales.total_alertas > 0 
+      ? Math.round((
+          (totales.alertas_confirmadas * 2) - // Doble peso a confirmadas
+          totales.falsos_positivos            // Penalización por falsos positivos
+        ) / (totales.total_alertas * 2) * 100) // Normalizado a 100
+      : 0;
+
+    res.json({
+      success: true,
+      periodo: {
+        fecha_inicio: fechaInicioStr,
+        fecha_fin: fechaFinStr,
+        dias: Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24))
+      },
+      estadisticas_totales: {
+        ...totales,
+        tasa_confianza: tasaConfianza,
+        tasa_precision: tasaPrecision,
+        tasa_error: tasaFalsosPositivos,
+        score_calidad: scoreCalidad
+      },
+      sectores: Object.values(sectores)
+    });
+
+  } catch (err) {
+    console.error('Error en /estadisticas-totales:', err);
+    res.status(500).json({ 
+      success: false,
+      error: 'Error al obtener estadísticas totales',
+      detalle: err.message 
+    });
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+});
 
 export default router
