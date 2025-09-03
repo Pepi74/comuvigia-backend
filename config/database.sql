@@ -12,8 +12,9 @@ CREATE TABLE camaras (
     estado_camara BOOLEAN NOT NULL DEFAULT TRUE,
     ultima_conexion TIMESTAMP NOT NULL,
     link_camara TEXT DEFAULT '', -- Opcional
-    id_sector SMALLINT REFERENCES sectores(id) -- FK a id de tabla sectores
-    zona_interes TEXT
+    link_camara_externo TEXT DEFAULT '',
+    id_sector SMALLINT REFERENCES sectores(id), -- FK a id de tabla sectores
+    zona_interes TEXT DEFAULT ''
 );
 
 CREATE TABLE alertas (
@@ -44,6 +45,7 @@ SELECT
     c.estado_camara,
     c.ultima_conexion,
     c.link_camara,
+    c.link_camara_externo
     COUNT(a.id) AS total_alertas
 FROM
     camaras c
@@ -98,14 +100,52 @@ BEGIN
 END;
 $$;
 
-INSERT INTO sectores (nombre_sector, descripcion)
-VALUES
-    ('Sector Norte', 'Sector norte de la comuna.'),
-    ('Sector Sur', 'Sector sur de la comuna.'),
-    ('Sector Centro', 'Sector centro de la comuna.');
+-- Insertar datos en la tabla sectores
+INSERT INTO public.sectores (id, nombre_sector, descripcion) VALUES
+(1, 'Sector Norte', 'Sector norte de la comuna.'),
+(2, 'Sector Sur', 'Sector sur de la comuna.'),
+(3, 'Sector Centro', 'Sector centro de la comuna.');
 
-INSERT INTO camaras (nombre, posicion, direccion, estado_camara, ultima_conexion, link_camara, id_sector)
-VALUES
-    ('Cámara Plaza', '{-33.52, -70.603}', 'Avenida 123', TRUE, '2024-06-09 19:30:00', 'http://localhost:5000/video_feed', 3),
-    ('Cámara Sur', '{-33.525, -70.6}', 'Avenida 123', FALSE, '2024-06-09 19:30:00', '', 3),
-    ('Cámara Centro', '{-33.511, -70.59}', 'Avenida 123', FALSE, '2024-06-09 19:30:00', '', 2);
+-- Insertar datos en la tabla camaras
+INSERT INTO public.camaras (id, nombre, posicion, direccion, estado_camara, ultima_conexion, link_camara, id_sector) VALUES
+(1, 'Cámara Plaza', '{-33.52,-70.603}', 'Avenida 123', true, '2024-06-09 19:30:00', 'http://192.168.194.154:5001/video', 3),
+(2, 'Cámara Sur', '{-33.525,-70.6}', 'Avenida 123', true, '2024-06-09 19:30:00', 'http://192.168.194.154:5002/video', 2),
+(3, 'Cámara Centro', '{-33.511,-70.59}', 'Avenida 123', false, '2024-06-09 19:30:00', '', 3),
+(4, 'Cámara Nva Uno C', '{-33.51294207728343,-70.59412183271313}', 'Nva Uno 6476', true, '2024-06-09 19:30:00', '', 1),
+(5, 'Camára Yungay P', '{-33.52300949975702,-70.61148997793823}', 'Yungay 645', true, '2024-06-09 19:30:00', '', 1),
+(6, 'Cámara Poniente AH', '{-33.517979467788265,-70.60499751348732}', 'Atahualpa 6892', true, '2024-06-09 19:30:00', '', 2);
+
+-- Insertar datos en la tabla alertas
+INSERT INTO public.alertas (id, id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso, estado, tipo, clip) VALUES
+(2, 2, 'Merodeo detectado en Calle 1', '2025-06-18 16:39:00', 0.85, 'Persona merodeando en la casa 645', 1, 1, NULL),
+(3, 1, 'Merodeo', '2025-08-10 21:41:34.128106', 0.9279417991638184, 'a woman is seen in this surveillance image', 1, 1, NULL),
+(4, 1, 'Merodeo', '2025-08-10 21:41:49.365153', 0.9386122822761536, 'a man is seen in this surveillance image', 1, 1, NULL),
+(5, 1, 'Merodeo', '2025-08-10 21:50:05.289628', 0.9279417991638184, 'a woman is seen in this surveillance image', 1, 1, NULL),
+(6, 1, 'Merodeo', '2025-08-10 21:50:21.728442', 0.9386122822761536, 'a man is seen in this surveillance image', 1, 1, NULL),
+(7, 1, 'Merodeo', '2025-08-10 21:50:31.309801', 0.9300715923309326, 'a man is seen in this surveillance image', 1, 1, NULL),
+(8, 1, 'Merodeo', '2025-08-10 22:05:32.867594', 0.9279417991638184, 'a woman is seen in this surveillance image', 1, 1, NULL),
+(9, 1, 'Merodeo', '2025-08-10 22:17:42.564887', 0.9279417991638184, 'a woman is seen in this surveillance image', 1, 1, NULL),
+(10, 1, 'Merodeo', '2025-08-10 22:18:46.271335', 0.9329694509506226, 'a woman is seen in this surveillance image', 1, 1, NULL),
+(11, 3, 'Merodeo', '2025-08-10 22:25:38.354863', 0.93, 'a woman is seen in this surveillance image', 2, 1, NULL),
+(12, 3, 'Merodeo', '2025-08-11 16:17:38.460177', 0.93, '[Alerta merodeo] 2025-08-11 12:17:27 | Activar protocolo: notificar a operador, enfocar cámara, registrar evidencia en enviar patrulla cercana.', 0, 1, NULL),
+(13, 3, 'Merodeo', '2025-08-11 16:29:50.976066', 0.93, '[Alerta merodeo] 2025-08-11 12:29:39 | Activar protocolo: notificar a operador, enfocar cámara, registrar evidencia en enviar patrulla cercana.', 0, 1, NULL),
+(14, 1, 'Merodeo', '2025-08-11 16:34:37.73551', 0.93, '[Alerta merodeo] 2025-08-11 12:34:27 |  Activar protocolo: notificar a operador, enfocar cámara, registrar evidencia en enviar patrulla cercana.', 0, 1, NULL),
+(15, 1, 'Merodeo', '2025-08-11 16:46:24.940547', 0.93, '[Alerta merodeo] 2025-08-11 12:45:56 | Continuar observación pasiva en registro.', 0, 1, NULL),
+(16, 1, 'Merodeo', '2025-08-12 21:50:21.635222', 0.93, '[Alerta merodeo] sin datos (timeout del analizador)', 0, 1, NULL),
+(17, 1, 'Merodeo', '2025-08-12 23:22:04.24088', 0.93, '[Alerta merodeo] sin datos (timeout del analizador)', 1, 1, NULL),
+(18, 1, 'Merodeo', '2025-08-12 23:27:12.847831', 0.93, '[Alerta merodeo] 2025-08-12 19:26:59 | Continuar observación pasiva en registro.', 1, 1, NULL),
+(19, 1, 'Merodeo', '2025-08-12 23:38:06.396645', 0.93, '[Descripción] 2025-08-12 19:37:12 | Ropa: blusa blanca en pantalones negros, Cabello: largo en oscuro.', 2, 1, NULL),
+(20, 1, 'Merodeo', '2025-08-12 23:44:44.747405', 0.93, 'La persona está vestida con una camiseta blanca, pantalones negros en zapatillas de deporte. No se observan accesorios visibles como gorra, capucha, mochila, guantes o gafas. El cabello', 1, 1, NULL),
+(21, 1, 'Merodeo', '2025-08-13 00:21:00.251535', 0.93, 'No se observan detalles específicos sobre la ropa o accesorio. El cabello es oscuro en largo.', 1, 1, NULL),
+(22, 2, 'Merodeo', '2025-08-14 04:18:21.907023', 0.93, 'No se observan ropas superiores o accesorio distintivo. El cabello es oscuro en corto. La persona lleva una camiseta blanca, pantalones negros en zapatillas.', 0, 1, NULL),
+(23, 2, 'Merodeo', '2025-08-14 04:35:33.279086', 0.93, 'Descripción no disponible (error de procesamiento).', 0, 1, NULL),
+(24, 1, 'Portonazo', '2025-08-14 05:20:58.495481', 0.89, '[Alerta merodeo] sin datos (error del analizador)', 1, 2, NULL),
+(25, 2, 'Portonazo', '2025-08-14 05:26:41.290484', 0.93, '[Alerta merodeo] sin datos (error del analizador)', 0, 2, NULL),
+(26, 1, 'Asalto hogar', '2025-08-14 05:32:57.458472', 0.75, 'La persona lleva una camiseta blanca en pantalones negros. No se observa anomalía.', 1, 3, NULL),
+(27, 1, 'Asalto hogar', '2025-08-14 05:34:40.703153', 0.65, 'Niño con camiseta blanca en pantalón negro, lleva una mochila roja. Cabeza negra corta, no se observa barba. Se mueve con normalidad, observando el camino.', 1, 3, NULL);
+
+-- Actualizar las secuencias
+SELECT pg_catalog.setval('public.alertas_id_seq', 27, true);
+SELECT pg_catalog.setval('public.camaras_id_seq', 6, true);
+SELECT pg_catalog.setval('public.sectores_id_seq', 3, true);
+SELECT pg_catalog.setval('public.tipos_alerta_id_seq', 1, false);

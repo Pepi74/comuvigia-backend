@@ -15,7 +15,8 @@ router.get('/', async (_, res) => {
         direccion: "Demo - Santiago Centro",
         estado_camara: true,
         ultima_conexion: "2025-08-28T12:00:00Z",
-        link_camara: "/loitering.mp4"
+        link_camara: "/loitering.mp4",
+        link_camara_externo: "/loitering.mp4"
       },
       {
         id: 9992,
@@ -24,7 +25,8 @@ router.get('/', async (_, res) => {
         direccion: "Demo - Providencia",
         estado_camara: true,
         ultima_conexion: "2025-08-28T12:00:00Z",
-        link_camara: "/burglary.mp4"
+        link_camara: "/burglary.mp4",
+        link_camara_externo: "/burglary.mp4"
       },
       {
         id: 9993,
@@ -33,7 +35,8 @@ router.get('/', async (_, res) => {
         direccion: "Demo - Ñuñoa",
         estado_camara: true,
         ultima_conexion: "2025-08-28T12:00:00Z",
-        link_camara: "/portonazo.mp4"
+        link_camara: "/portonazo.mp4",
+        link_camara_externo: "/portonazo.mp4"
       }
 
       
@@ -66,6 +69,7 @@ router.get('/cantidad-alertas', async (req, res) => {
         estado_camara: true,
         ultima_conexion: "2025-08-28T12:00:00Z",
         link_camara: "/loitering.mp4",
+        link_camara_externo: "/loitering.mp4",
         total_alertas: 0,
         id_sector: 1,
         zona_interes: "Zona Demo"
@@ -78,6 +82,7 @@ router.get('/cantidad-alertas', async (req, res) => {
         estado_camara: true,
         ultima_conexion: "2025-08-28T12:00:00Z",
         link_camara: "/burglary.mp4",
+        link_camara_externo: "/burglary.mp4",
         total_alertas: 0,
         id_sector: 1,
         zona_interes: "Zona Demo"
@@ -90,6 +95,7 @@ router.get('/cantidad-alertas', async (req, res) => {
         estado_camara: true,
         ultima_conexion: "2025-08-28T12:00:00Z",
         link_camara: "/portonazo.mp4",
+        link_camara_externo: "/portonazo.mp4",
         total_alertas: 0,
         id_sector: 1,
         zona_interes: "Zona Demo"

@@ -35,21 +35,12 @@ S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
 S3_BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
 S3_REGION = "us-east-1"
 
-# Configuración de cámaras / luego que vengan de una api
-'''CAMERAS = {
-    "cam1": {
-        "link_camara": "rtsp://prueba:12341234@host.docker.internal:8554/live",
-        "estado_camara": True
-    }
-    # Agrega más cámaras aquí
-}'''
+# Configuración de cámaras
 url = "http://backend:3000/api/camaras"
-
 payload = {}
 headers = {}
 
 response = requests.request("GET", url, headers=headers, data=payload)
-
 print(response.text)
 CAMERAS = json.loads(response.text)
 
@@ -188,7 +179,107 @@ class S3Client:
             logger.error(traceback.format_exc())
             return False
 
+# HTTP
 class VideoStream:
+    def __init__(self, camera_id, link_camara):
+        self.camera_id = camera_id
+        self.link_camara = link_camara
+        self.frame = None
+        self.lock = Lock()
+        self.running = False
+        self.thread = None
+        self.frames_buffer = []
+        self.last_batch_time = time.time()
+        self.s3_client = S3Client()
+        self.cap = None
+        self.connection_attempts = 0
+        self.last_error = None
+
+    def start(self):
+        self.running = True
+        self.thread = Thread(target=self.update, daemon=True)
+        self.thread.start()
+        logger.info(f"Stream de cámara {self.camera_id} iniciado")
+
+    def update(self):
+        while self.running:
+            try:
+                if self.cap is None:
+                    self.connection_attempts += 1
+                    logger.info(f"Cámara {self.camera_id}: Intentando conexión #{self.connection_attempts}")
+                    
+                    self.cap = cv2.VideoCapture(self.link_camara)
+                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    self.cap.set(cv2.CAP_PROP_FPS, MAX_FPS)
+                    
+                    if not self.cap.isOpened():
+                        logger.error(f"Cámara {self.camera_id}: No se pudo abrir el stream")
+                        self.cap.release()
+                        self.cap = None
+                        time.sleep(2)
+                        continue
+                    
+                    logger.info(f"Cámara {self.camera_id}: Conectada exitosamente")
+                
+                ret, frame = self.cap.read()
+                if not ret:
+                    logger.warning(f"Cámara {self.camera_id}: Frame vacío - reconectando...")
+                    self.cap.release()
+                    self.cap = None
+                    time.sleep(1)
+                    continue
+
+                # Procesamiento
+                processed_frame = cv2.resize(frame, DEFAULT_OUTPUT_SIZE)
+                
+                with self.lock:
+                    self.frame = processed_frame
+                    self.frames_buffer.append(processed_frame.copy())
+                    
+                    current_time = time.time()
+                    if (len(self.frames_buffer) >= BATCH_SIZE or 
+                        current_time - self.last_batch_time >= BATCH_INTERVAL):
+                        self.save_batch()
+                        
+            except Exception as e:
+                self.last_error = str(e)
+                logger.error(f"Cámara {self.camera_id}: Error en captura: {str(e)}")
+                if self.cap:
+                    self.cap.release()
+                    self.cap = None
+                time.sleep(2)
+    
+    def save_batch(self):
+        if not self.frames_buffer:
+            return
+            
+        try:
+            # Guardar batch actual
+            batch_to_save = self.frames_buffer.copy()
+            timestamp = datetime.now()
+            
+            # Limpiar buffer
+            self.frames_buffer = []
+            self.last_batch_time = time.time()
+            
+            # Subir a S3 en un hilo separado para no bloquear
+            Thread(target=self.s3_client.upload_batch, 
+                  args=(self.camera_id, batch_to_save, timestamp), 
+                  daemon=True).start()
+            
+        except Exception as e:
+            logger.error(f"Cámara {self.camera_id}: Error guardando batch: {str(e)}")
+
+    def get_frame(self):
+        with self.lock:
+            if self.frame is None:
+                return None
+            _, jpeg = cv2.imencode('.jpg', self.frame, 
+                                 [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            return jpeg.tobytes()
+
+# RTSP
+class VideoStreamOpenCV:
     def __init__(self, camera_id, link_camara):
         self.camera_id = camera_id
         self.link_camara = link_camara
@@ -204,12 +295,11 @@ class VideoStream:
         self.running = True
         self.thread = Thread(target=self.update, daemon=True)
         self.thread.start()
-        logger.info(f"Stream de cámara {self.camera_id} iniciado")
+        logger.info(f"Stream de cámara {self.camera_id} iniciado (OpenCV)")
 
     def update(self):
-        cap = cv2.VideoCapture(self.link_camara, cv2.CAP_FFMPEG)
-        #cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # buffer min
-        cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY) #gpu
+        # Para streams HTTP con OpenCV
+        cap = cv2.VideoCapture(self.link_camara)
         
         while self.running:
             try:
@@ -218,7 +308,7 @@ class VideoStream:
                     logger.warning(f"Cámara {self.camera_id}: Frame vacío - reconectando...")
                     time.sleep(1)
                     cap.release()
-                    cap = cv2.VideoCapture(self.link_camara, cv2.CAP_FFMPEG)
+                    cap = cv2.VideoCapture(self.link_camara)
                     continue
 
                 # Procesamiento
@@ -239,6 +329,11 @@ class VideoStream:
             except Exception as e:
                 logger.error(f"Cámara {self.camera_id}: Error en captura: {str(e)}")
                 time.sleep(1)
+                try:
+                    cap.release()
+                except:
+                    pass
+                cap = cv2.VideoCapture(self.link_camara)
 
         cap.release()
 
@@ -271,45 +366,80 @@ class VideoStream:
                                  [int(cv2.IMWRITE_JPEG_QUALITY), 80])
             return jpeg.tobytes()
 
+
 # Inicializar streams para todas las cámaras
 video_streams = {}
 if isinstance(CAMERAS, str):
     cameras_data = json.loads(CAMERAS)
 else:
     cameras_data = CAMERAS
+
 for camera in cameras_data:
     cam_id = camera["id"]
     config = camera
     
-    if config["estado_camara"] and config["link_camara"]:  # Verificar que tenga link
-        video_streams[cam_id] = VideoStream(
-            cam_id, 
-            config["link_camara"], 
-        )
-        video_streams[cam_id].start()
+    if config["estado_camara"] and config["link_camara"]:
+        logger.info(f"Intentando inicializar cámara {cam_id}: {config['link_camara']}")
+        
+        try:
+            # NO usar requests.head() para streams de video - usualmente falla
+            # Inicializar directamente la cámara
+            video_streams[cam_id] = VideoStream(cam_id, config["link_camara"])
+            video_streams[cam_id].start()
+            logger.info(f"Cámara {cam_id} inicializada - Estado: {video_streams[cam_id].running}")
+            
+        except Exception as e:
+            logger.error(f"Error inicializando cámara {cam_id}: {str(e)}")
+            # Aún así crear el objeto para debugging
+            video_streams[cam_id] = VideoStream(cam_id, config["link_camara"])
+            logger.warning(f"Cámara {cam_id} creada pero no iniciada debido a error")
+
+# Log todas las cámaras inicializadas
+logger.info(f"Cámaras en video_streams: {list(video_streams.keys())}")
 
 def generate_frames(camera_id):
-    if camera_id not in video_streams:
-        yield error_frame("Camera not found")
+    # Convertir camera_id a entero
+    try:
+        camera_id_int = int(camera_id)
+    except ValueError:
+        logger.error(f"Camera ID inválido: {camera_id}")
+        yield error_frame("Invalid camera ID")
         return
         
-    stream = video_streams[camera_id]
+    if camera_id_int not in video_streams:
+        logger.error(f"Camera {camera_id_int} not found in video_streams. Available: {list(video_streams.keys())}")
+        yield error_frame(f"Camera {camera_id_int} not found")
+        return
+        
+    stream = video_streams[camera_id_int]
     last_time = time.time()
+    error_count = 0
+    
+    logger.info(f"Starting video feed for camera {camera_id_int}")
     
     while True:
-        frame = stream.get_frame()
-        
-        if frame:
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        try:
+            frame = stream.get_frame()
             
-            # Control de FPS
-            elapsed = time.time() - last_time
-            delay = max(0, (1/MAX_FPS) - elapsed)
-            time.sleep(delay)
-            last_time = time.time()
-        else:
-            yield error_frame("No signal")
+            if frame:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                error_count = 0
+                
+                elapsed = time.time() - last_time
+                delay = max(0, (1/MAX_FPS) - elapsed)
+                time.sleep(delay)
+                last_time = time.time()
+            else:
+                error_count += 1
+                if error_count > 5:
+                    logger.warning(f"Camera {camera_id_int}: No frame available ({error_count} attempts)")
+                yield error_frame("No signal")
+                time.sleep(0.5)
+                    
+        except Exception as e:
+            logger.error(f"Error generating frames for {camera_id_int}: {str(e)}")
+            yield error_frame("Stream error")
             time.sleep(1)
 
 def error_frame(message):
@@ -319,6 +449,48 @@ def error_frame(message):
     _, jpeg = cv2.imencode('.jpg', error_frame)
     return (b'--frame\r\n'
            b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+
+@app.route('/camera_status/<camera_id>')
+def camera_status(camera_id):
+    """Endpoint para diagnosticar el estado de una cámara específica"""
+    try:
+        camera_id_int = int(camera_id)
+    except ValueError:
+        return jsonify({"error": "Camera ID must be a number"}), 400
+        
+    if camera_id_int not in video_streams:
+        return jsonify({
+            "error": f"Cámara {camera_id_int} no encontrada en video_streams",
+            "available_cameras": list(video_streams.keys()),
+            "configured_cameras": [cam["id"] for cam in (json.loads(CAMERAS) if isinstance(CAMERAS, str) else CAMERAS)]
+        }), 404
+    
+    stream = video_streams[camera_id_int]
+    status = {
+        "camera_id": camera_id_int,
+        "stream_url": stream.link_camara,
+        "running": stream.running,
+        "has_frame": stream.frame is not None,
+        "buffer_size": len(stream.frames_buffer),
+        "connection_attempts": stream.connection_attempts,
+        "last_error": stream.last_error,
+        "s3_connected": stream.s3_client.connected if hasattr(stream, 's3_client') else False
+    }
+    return jsonify(status)
+
+@app.route('/all_cameras_status')
+def all_cameras_status():
+    """Estado de todas las cámaras"""
+    status = {}
+    for cam_id, stream in video_streams.items():
+        status[cam_id] = {
+            "running": stream.running,
+            "has_frame": stream.frame is not None,
+            "stream_url": stream.link_camara,
+            "connection_attempts": stream.connection_attempts,
+            "last_error": stream.last_error
+        }
+    return jsonify(status)
 
 @app.route('/video_feed/<camera_id>')
 def video_feed(camera_id):
@@ -485,6 +657,7 @@ def save_frames():
         return jsonify({'error': 'Error interno del servidor'}), 500
 
 @app.route('/api/save-single-frame', methods=['POST'])
+
 def save_single_frame():
     """
     API para guardar un solo frame y retornar el key
