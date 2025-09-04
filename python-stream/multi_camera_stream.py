@@ -108,11 +108,19 @@ class S3Client:
             }
 
             # Fusionar con metadata personalizada si existe
+            # Normalizar custom_metadata
             if custom_metadata:
-                metadata = {**base_metadata, **custom_metadata}
+                normalized_custom = {}
+                for k, v in custom_metadata.items():
+                    if isinstance(v, datetime):
+                        normalized_custom[k] = v.isoformat()
+                    elif isinstance(v, dict):
+                        normalized_custom[k] = json.dumps(v)
+                    else:
+                        normalized_custom[k] = str(v)
+                metadata = {**base_metadata, **normalized_custom}
             else:
                 metadata = base_metadata
-            
             # Crear archivo tar con frames individuales
             tar_buffer = BytesIO()
             
