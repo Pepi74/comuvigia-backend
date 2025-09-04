@@ -45,7 +45,7 @@ SELECT
     c.estado_camara,
     c.ultima_conexion,
     c.link_camara,
-    c.link_camara_externo
+    c.link_camara_externo,
     COUNT(a.id) AS total_alertas
 FROM
     camaras c
