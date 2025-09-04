@@ -57,7 +57,8 @@ router.post('/nueva-alerta', async (req, res) => {
     const nuevaAlerta = result.rows[0];
 
     // 2. Si hay frames, guardarlos en S3 y obtener el key
-    if (frames && frames.length > 0) {
+    if (frames.length > 0) {
+      console.log(id_camara)
       try {
         const metadata = {
           alert_id: nuevaAlerta.id,
@@ -67,7 +68,7 @@ router.post('/nueva-alerta', async (req, res) => {
         };
 
         // Llamar a la API de Python para guardar frames
-        const response = await fetch('http://python-service:5000/save-frames', {
+        const response = await fetch('http://python-stream:5000/save-frames', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -78,7 +79,7 @@ router.post('/nueva-alerta', async (req, res) => {
             metadata: metadata
           })
         });
-
+        console.log(response)
         const s3Result = await response.json();
 
         if (s3Result.success) {
@@ -99,7 +100,7 @@ router.post('/nueva-alerta', async (req, res) => {
         // No guardar la alerta completa si hay error con los frames
         res.status(500).json({ error: s3Error });
       }
-    }
+    } else{console.log("jaime")}
 
     // 4. Guardar en Redis y emitir WebSocket
     await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));

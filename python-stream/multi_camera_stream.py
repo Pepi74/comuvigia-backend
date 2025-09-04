@@ -580,50 +580,45 @@ def manage_config():
 def save_frames():
     """
     API para guardar frames en el bucket S3/MinIO
-    Soporta múltiples formatos: base64, bytes, o frames ya procesados
+    Espera: JSON con camera_id y frames (lista de base64 JPEG)
     """
     try:
         data = request.get_json()
-        
         if not data:
             return jsonify({'error': 'No se proporcionaron datos JSON'}), 400
-        
-        # Verificar campos obligatorios
+        print(data['frames'])
+        # Campos obligatorios
         required_fields = ['camera_id', 'frames']
         for field in required_fields:
             if field not in data:
                 return jsonify({'error': f'Campo requerido faltante: {field}'}), 400
         
         camera_id = data['camera_id']
-        frames_data = data['frames']
+        frames_data = data['frames']  # lista de strings base64
         metadata = data.get('metadata', {})
         
-        # Procesar los frames
+        # Procesar frames: base64 JPEG → OpenCV Mat
         processed_frames = []
-        
-        for frame_data in frames_data:
-            frame = None
-            
-            # Diferentes formatos de frame
-            if isinstance(frame_data, str) and frame_data.startswith('data:image'):
-                # Base64 con header data:image
-                frame = decode_base64_frame(frame_data)
-            elif isinstance(frame_data, str):
-                # Base64 simple
-                frame = decode_base64_simple(frame_data)
-            elif isinstance(frame_data, dict) and 'image_data' in frame_data:
-                # Formato estructurado
-                frame = decode_structured_frame(frame_data)
-            else:
-                return jsonify({'error': 'Formato de frame no soportado'}), 400
-            
-            if frame is not None:
-                processed_frames.append(frame)
+        for frame_base64 in frames_data:
+            try:
+                # Decodificar base64 a bytes
+                frame_bytes = base64.b64decode(frame_base64)
+                # Convertir bytes a NumPy array
+                np_arr = np.frombuffer(frame_bytes, np.uint8)
+                # Decodificar JPEG a frame (cv2 Mat)
+                frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                
+                if frame is not None:
+                    processed_frames.append(frame)
+                else:
+                    logger.warning('No se pudo decodificar un frame')
+            except Exception as e:
+                logger.warning(f'Error decodificando frame: {str(e)}')
         
         if not processed_frames:
             return jsonify({'error': 'No se pudieron procesar los frames'}), 400
         
-        # Agregar metadata adicional
+        # Metadata adicional
         full_metadata = {
             **metadata,
             'source': 'api-save-frames',
@@ -632,7 +627,7 @@ def save_frames():
             'camera_id': camera_id
         }
         
-        # Usar tu S3Client existente para subir el batch
+        # Subir batch a S3
         timestamp = datetime.now()
         success = S3Client.upload_batch(camera_id, processed_frames, timestamp, full_metadata, True)
         
@@ -653,7 +648,7 @@ def save_frames():
             }), 200
         else:
             return jsonify({'error': 'Error al subir frames a S3'}), 500
-            
+        
     except Exception as e:
         logger.error(f"Error en API save-frames: {str(e)}")
         return jsonify({'error': 'Error interno del servidor'}), 500
