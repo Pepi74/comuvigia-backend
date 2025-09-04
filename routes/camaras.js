@@ -113,4 +113,18 @@ router.get('/cantidad-alertas', async (req, res) => {
   }
 })
 
+router.get('/nombre-camaras', async (_, res) => {
+  try {
+    const result = await pool.query('SELECT id, nombre FROM camaras');
+    const cameraMap = {};
+    result.rows.forEach(row => {
+      cameraMap[row.id] = row.nombre;
+    });
+    res.json(cameraMap);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error servidor');
+  }
+})
+
 export default router
