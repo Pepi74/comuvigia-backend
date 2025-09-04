@@ -16,8 +16,10 @@ import os
 import base64
 from flask import Flask, Response, jsonify, request
 from video_reconstructor import video_bp, video_reconstructor
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": os.environ["FRONTEND_URL"]}})
 app.register_blueprint(video_bp, url_prefix='/')
 start_time = time.time()
 

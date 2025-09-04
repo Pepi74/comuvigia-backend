@@ -5,3 +5,4 @@ numpy
 boto3
 botocore
 requests
+flask-cors
