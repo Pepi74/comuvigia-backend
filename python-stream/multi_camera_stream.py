@@ -96,6 +96,16 @@ class S3Client:
             if not frames:
                 logger.warning(f"Cámara {camera_id}: No hay frames para guardar")
                 return False
+            
+            # Asegurar que timestamp sea datetime
+            if isinstance(timestamp, dict):
+                # Si es diccionario, intentar convertirlo
+                logger.warning(f"Cámara {camera_id}: timestamp es diccionario, convirtiendo")
+                # Aquí puedes agregar lógica para extraer el timestamp del diccionario si es necesario
+                timestamp = datetime.now()  # O usar datetime.fromisoformat() si el dict tiene un campo de fecha
+            elif not isinstance(timestamp, datetime):
+                logger.warning(f"Cámara {camera_id}: timestamp no es datetime, usando ahora")
+                timestamp = datetime.now()
             # Crear metadata con información crucial
             base_metadata  = {
                 "camera_id": str(camera_id),
@@ -637,7 +647,8 @@ def save_frames():
         
         # Subir batch a S3
         timestamp = datetime.now()
-        success = S3Client.upload_batch(camera_id, processed_frames, timestamp, full_metadata, True)
+        s3_client = S3Client() 
+        success = s3_client.upload_batch(camera_id, processed_frames, timestamp, full_metadata, True)
         
         if success:
             return jsonify({
@@ -707,7 +718,8 @@ def save_single_frame():
         
         # Subir a S3 y obtener información
         timestamp = datetime.now()
-        upload_result = S3Client.upload_batch(camera_id, processed_frames, timestamp, full_metadata)
+        s3_client = S3Client()
+        upload_result = s3_client.upload_batch(camera_id, processed_frames, timestamp, full_metadata)
         
         if upload_result:
             return jsonify({
