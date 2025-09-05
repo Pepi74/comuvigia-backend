@@ -228,6 +228,8 @@ router.put('/editar-descripcion/:id', async (req, res) => {
     await redisClient.lPush('alertas', nuevasAlertas.map(JSON.stringify));
     await redisClient.lTrim('alertas', 0, 99);
 
+    io.emit("nueva-descripcion", alertaActualizada);
+
     res.json({ ok: true, alerta: alertaActualizada });
   } catch (error) {
     console.error('Error actualizando descripción:', error);
