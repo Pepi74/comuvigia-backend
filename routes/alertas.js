@@ -57,7 +57,7 @@ router.post('/nueva-alerta', async (req, res) => {
     const nuevaAlerta = result.rows[0];
     console.log(typeof(frames))
     // 2. Si hay frames, guardarlos en S3 y obtener el key
-    if (frames.length > 0) {
+    if (frames && frames.length > 0) {
       console.log(id_camara)
       try {
         const metadata = {
