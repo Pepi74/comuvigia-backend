@@ -418,4 +418,5 @@ router.get('/estadisticas-totales', async (req, res) => {
   }
 });
 
+
 export default router
