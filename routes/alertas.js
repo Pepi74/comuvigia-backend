@@ -57,7 +57,7 @@ router.post('/nueva-alerta', async (req, res) => {
     const nuevaAlerta = result.rows[0];
     console.log(typeof(frames))
     // 2. Si hay frames, guardarlos en S3 y obtener el key
-    if (frames.length > 0) {
+    if (frames && frames.length > 0) {
       console.log(id_camara)
       try {
         const metadata = {
@@ -227,6 +227,8 @@ router.put('/editar-descripcion/:id', async (req, res) => {
     await redisClient.del('alertas');
     await redisClient.lPush('alertas', nuevasAlertas.map(JSON.stringify));
     await redisClient.lTrim('alertas', 0, 99);
+
+    io.emit("nueva-descripcion", alertaActualizada);
 
     res.json({ ok: true, alerta: alertaActualizada });
   } catch (error) {
