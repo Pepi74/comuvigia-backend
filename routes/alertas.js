@@ -237,6 +237,37 @@ router.put('/editar-descripcion/:id', async (req, res) => {
   }
 });
 
+router.delete('/eliminar-alerta/:id', async (req, res) => {
+  const id = req.params.id;
+  try {
+    // Eliminar en Postgres
+    await pool.query('DELETE FROM alertas WHERE id = $1', [id]);
+
+    // Eliminar en Redis
+    await redisClient.del(`alerta:${id}`);
+    await redisClient.sRem('alertas_no_vistas', id);
+
+    // Eliminar de la lista de últimas 100 alertas
+    const lista = await redisClient.lRange('alertas', 0, -1);
+    const nuevaLista = lista.filter(a => {
+      const parsed = JSON.parse(a);
+      return Number(parsed.id) !== Number(id);
+    });
+
+    // Sobrescribir lista (respetando límite de 100)
+    if (nuevaLista.length > 0) {
+      await redisClient.del('alertas');
+      await redisClient.lPush('alertas', nuevaLista);
+      await redisClient.lTrim('alertas', 0, 99);
+    }
+
+    res.json({ ok: true, message: `Alerta ${id} eliminada correctamente` });
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: "Error eliminando alerta" });
+  }
+})
+
 // Obtener alertas por id de camara
 router.get('/camara/:id_camara', async (req, res) => {
   const id_camara = req.params.id_camara
