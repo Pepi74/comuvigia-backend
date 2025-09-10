@@ -18,7 +18,7 @@ router.post('/casos_prueba', async (req, res) => {
 
   const trimmedDelito = delito.trim();
   const timeout = 30000; // 30 segundos de timeout
-  const maxRetries = 3;
+  const maxRetries = 1;
   let retryCount = 0;
 
   const makeRequest = async () => {
