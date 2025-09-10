@@ -1,7 +1,10 @@
 // Endpoint de prueba
 import { Router } from 'express'
 const router = Router()
-require('dotenv').config(); // Carga las variables del archivo .env
+import dotenv from 'dotenv';
+import { config } from 'dotenv';
+
+dotenv.config();
 
 console.log(process.env.IA_URL);
 
