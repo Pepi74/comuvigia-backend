@@ -160,6 +160,199 @@ class VideoReconstructor:
         
         out.release()
         return temp_video_path
+    
+    def reconstruct_clip(self, key, output_format="mp4"):
+        """Reconstruir video desde clip de S3"""
+        # 1. Encontrar batches en el rango de tiempo
+        clip = self._find_clip(key)
+        
+        if not clip:
+            return None, "No se encontro clip"
+        
+        # 2. Descargar y extraer batches
+        all_frames = self._download_and_extract_clip(clip)
+        
+        if not all_frames:
+            return None, "No se pudieron extraer frames"
+        
+        # 3. Crear video
+        video_path = self._create_video(all_frames, output_format)
+        
+        return video_path, None
+    
+    def reconstruct_clip_play(self, key, output_format="mp4"):
+        """Reconstruir video desde clip de S3"""
+        # 1. Encontrar clip
+        clip = self._find_clip(key)
+        
+        if not clip:
+            return None, "No se encontro clip"
+        
+        # 2. Descargar y extraer clip
+        all_frames = self._download_and_extract_clip(clip)
+        
+        if not all_frames:
+            return None, "No se pudieron extraer frames"
+        
+        # 3. Crear video - CORREGIDO: usar _create_video en lugar de _create_clip_video
+        camera_id = key.split('/')[1] if len(key.split('/')) > 1 else "unknown"
+        video_path = self._create_clip_video(all_frames, camera_id, output_format)
+        
+        return video_path, None
+
+    def _find_clip(self, key):
+        """Encontrar clip en S3 dado su ubicacion"""
+        try:
+            response = self.s3_client.head_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=key
+            )
+            filename = key.split('/')[-1]
+            if filename.endswith('.tar.gz'):
+                try:
+                    clip_time_str = filename.split('_')[1] + '_' + filename.split('_')[2].split('.')[0]
+                    clip_time = datetime.strptime(clip_time_str, '%Y%m%d_%H%M%S')
+                except Exception:
+                    clip_time = None
+
+                return {
+                    'key': key,
+                    'time': clip_time,
+                    'size': response['ContentLength']
+                }
+            else:
+                logger.warning(f"El archivo {filename} no es un .tar.gz válido")
+                return None
+        
+        except Exception as e:
+            logger.error(f"Error buscando clip: {str(e)}")
+            return None
+    
+    def _download_and_extract_clip(self, clip):
+        """Descargar y extraer frames de clip"""
+        all_frames = []
+        
+        try:
+            # Descargar clip
+            response = self.s3_client.get_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=clip['key']
+            )
+            
+            # Extraer tar.gz
+            tar_bytes = BytesIO(response['Body'].read())
+            
+            with tarfile.open(fileobj=tar_bytes, mode='r:gz') as tar:
+                # Leer metadata
+                metadata_file = tar.extractfile('metadata.json')
+                metadata = json.load(metadata_file)
+                
+                # Extraer frames en orden
+                frame_files = [m for m in tar.getmembers() if m.name.startswith('frame_')]
+                frame_files.sort(key=lambda x: x.name)
+                
+                for frame_file in frame_files:
+                    frame_data = tar.extractfile(frame_file).read()
+                    frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
+                    all_frames.append(frame)
+                    
+        except Exception as e:
+            logger.error(f"Error procesando clip {clip['key']}: {str(e)}")
+            all_frames = []
+        
+        return all_frames
+    
+    def _create_clip_video(self, frames, camera_id, output_format):
+        """Método alternativo para crear video con relación de aspecto 640x380"""
+        if not frames:
+            return None
+        
+        try:
+            # Crear directorio temporal para frames
+            temp_dir = tempfile.mkdtemp()
+            frame_paths = []
+            
+            # Dimensiones objetivo
+            target_width = 640
+            target_height = 360
+            
+            logger.info(f"Redimensionando frames a {target_width}x{target_height}")
+            
+            # Guardar cada frame redimensionado
+            for i, frame in enumerate(frames):
+                # Redimensionar manteniendo relación de aspecto y recortando
+                frame_resized = self._resize_frame(frame, target_width, target_height)
+                
+                frame_path = os.path.join(temp_dir, f"frame_{i:06d}.jpg")
+                cv2.imwrite(frame_path, frame_resized, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                frame_paths.append(frame_path)
+            
+            # Crear video con ffmpeg
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            temp_video_path = os.path.join(self.temp_dir, f"{camera_id}_{timestamp}.{output_format}")
+            
+            import subprocess
+            cmd = [
+                'ffmpeg', '-y', 
+                '-r', str(MAX_FPS),
+                '-i', os.path.join(temp_dir, 'frame_%06d.jpg'),
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-movflags', '+faststart',
+                '-vf', f'scale={target_width}:{target_height}:force_original_aspect_ratio=disable',  # Forzar dimensiones exactas
+                temp_video_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            # Limpiar archivos temporales
+            for frame_path in frame_paths:
+                try:
+                    os.remove(frame_path)
+                except:
+                    pass
+            try:
+                os.rmdir(temp_dir)
+            except:
+                pass
+            
+            if result.returncode == 0 and os.path.exists(temp_video_path):
+                logger.info(f"Video creado con dimensiones {target_width}x{target_height}")
+                return temp_video_path
+            else:
+                logger.error(f"ffmpeg failed: {result.stderr}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error en método alternativo: {str(e)}")
+            return None
+
+    def _resize_frame(self, frame, target_width, target_height):
+        """Redimensionar frame recortando para llenar el frame"""
+        height, width = frame.shape[:2]
+        
+        # Calcular escala para llenar el frame
+        scale_x = target_width / width
+        scale_y = target_height / height
+        scale = max(scale_x, scale_y)  # Usar max para llenar el frame
+        
+        new_width = int(width * scale)
+        new_height = int(height * scale)
+        
+        # Redimensionar
+        resized = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+        
+        # Recortar al centro para obtener dimensiones exactas
+        start_x = max(0, (new_width - target_width) // 2)
+        start_y = max(0, (new_height - target_height) // 2)
+        
+        cropped = resized[start_y:start_y+target_height, start_x:start_x+target_width]
+        
+        return cropped
+
+    
 
 # Inicializar reconstructor
 S3_ENDPOINT = "http://minio:9000"
@@ -564,4 +757,62 @@ def download_video(camera_id):
         
     except Exception as e:
         logger.error(f"Error descargando video: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+    
+@video_bp.route('/video/download', methods=['POST'])  # Cambiado a POST
+def download_clip():
+    """Descargar clip enviando key"""
+    try:
+        data = request.get_json()
+        if not data or 'key' not in data:
+            return jsonify({"error": "Se requiere parámetro 'key' en el body JSON"}), 400
+            
+        key = data['key']
+        output_format = request.args.get('format', 'mp4')  # Opcional: mantener format como query param
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Reconstruir el video
+        video_path, error_msg = video_reconstructor.reconstruct_clip_play(key, output_format)
+        
+        if error_msg:
+            return jsonify({"error": error_msg}), 404        
+        # Enviar el archivo para descarga
+        return send_file(
+            video_path,
+            as_attachment=True,
+            download_name=f"clip_{timestamp}.{output_format}",
+            mimetype=f"video/{output_format}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error descargando video: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@video_bp.route('/video/play', methods=['GET'])
+def play_clip():
+    """Reproducir clip directamente en navegador (para tag video)"""
+    try:
+        # Obtener parámetros de la query string
+        key = request.args.get('key')
+        output_format = request.args.get('format', 'mp4')
+        
+        if not key:
+            return jsonify({"error": "Se requiere parámetro 'key'"}), 400
+        
+        # Reconstruir el video
+        video_path, error = video_reconstructor.reconstruct_clip_play(key, output_format)
+        
+        if error:
+            return jsonify({"error": error}), 404
+        
+        # Enviar el archivo para reproducción (no como descarga)
+        return send_file(
+            video_path,
+            as_attachment=False,
+            download_name=f"clip.{output_format}",
+            mimetype=f"video/{output_format}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error reproduciendo clip: {str(e)}")
         return jsonify({"error": str(e)}), 500
