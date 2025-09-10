@@ -1,6 +1,9 @@
 // Endpoint de prueba
 import { Router } from 'express'
 const router = Router()
+require('dotenv').config(); // Carga las variables del archivo .env
+
+console.log(process.env.IA_URL);
 
 router.get('/', (_, res) => {
   res.send('¡Hola mundo desde el backend!')
@@ -26,7 +29,7 @@ router.post('/casos_prueba', async (req, res) => {
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     try {
-      const response = await fetch('http://192.168.194.154:4000/api/casos_prueba', {
+      const response = await fetch(process.env.IA_URL+'/api/casos_prueba', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
