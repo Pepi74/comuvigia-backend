@@ -31,6 +31,8 @@ ch.setFormatter(fmt)
 logger.addHandler(ch)
 
 MAX_FPS = 30
+# Constante de fallback si no viene en metadata
+DEFAULT_FPS = 12  # ajusta a tu realidad si sabes el valor típico
 
 video_bp = Blueprint('video', __name__)
 
@@ -40,6 +42,17 @@ class VideoReconstructor:
         self.temp_dir = tempfile.gettempdir()
     
     def reconstruct_video(self, camera_id, start_time, end_time, output_format="mp4"):
+        batches = self._find_batches_in_range(camera_id, start_time, end_time)
+        if not batches:
+            return None, "No se encontraron batches en el rango especificado"
+
+        all_frames, fps = self._download_and_extract_batches(batches)
+        if not all_frames:
+            return None, "No se pudieron extraer frames"
+
+        video_path = self._create_video(all_frames, camera_id, output_format, fps=fps)
+        return video_path, None
+    '''def reconstruct_video(self, camera_id, start_time, end_time, output_format="mp4"):
         """Reconstruir video desde batches de S3"""
         # 1. Encontrar batches en el rango de tiempo
         batches = self._find_batches_in_range(camera_id, start_time, end_time)
@@ -56,7 +69,7 @@ class VideoReconstructor:
         # 3. Crear video
         video_path = self._create_video(all_frames, camera_id, output_format)
         
-        return video_path, None
+        return video_path, None'''
     
     def _find_batches_in_range(self, camera_id, start_time, end_time):
         """Encontrar batches en S3 dentro del rango de tiempo"""
@@ -98,6 +111,58 @@ class VideoReconstructor:
         return batches
     
     def _download_and_extract_batches(self, batches):
+        """Descargar y extraer frames de batches; devuelve (frames, fps)"""
+        all_frames = []
+        fps = None
+
+        for batch in batches:
+            try:
+                response = self.s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=batch['key'])
+                tar_bytes = BytesIO(response['Body'].read())
+
+                with tarfile.open(fileobj=tar_bytes, mode='r:gz') as tar:
+                    # Metadata
+                    meta_member = tar.extractfile('metadata.json')
+                    metadata = json.load(meta_member) if meta_member else {}
+
+                    # 1) intenta leer fps directamente
+                    batch_fps = (
+                        metadata.get('fps') or
+                        metadata.get('frame_rate') or
+                        metadata.get('frameRate')
+                    )
+
+                    # 2) si no hay fps, intenta derivarlo
+                    if not batch_fps:
+                        frame_count = metadata.get('frame_count') or metadata.get('frames') or metadata.get('num_frames')
+                        duration_sec = metadata.get('duration_seconds') or metadata.get('duration')
+                        if frame_count and duration_sec and duration_sec > 0:
+                            batch_fps = float(frame_count) / float(duration_sec)
+
+                    # 3) primer fps que encontremos será el que usaremos (asumiendo homogéneo)
+                    if not fps and batch_fps:
+                        fps = float(batch_fps)
+
+                    # Frames
+                    frame_files = [m for m in tar.getmembers() if m.name.startswith('frame_')]
+                    frame_files.sort(key=lambda x: x.name)
+
+                    for frame_file in frame_files:
+                        frame_data = tar.extractfile(frame_file).read()
+                        frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
+                        if frame is not None:
+                            all_frames.append(frame)
+
+            except Exception as e:
+                logger.error(f"Error procesando batch {batch['key']}: {str(e)}")
+                continue
+
+        # fps fallback si no se pudo determinar
+        if not fps:
+            fps = DEFAULT_FPS
+
+        return all_frames, fps
+    '''def _download_and_extract_batches(self, batches):
         """Descargar y extraer frames de batches"""
         all_frames = []
         
@@ -130,9 +195,29 @@ class VideoReconstructor:
                 logger.error(f"Error procesando batch {batch['key']}: {str(e)}")
                 continue
         
-        return all_frames
+        return all_frames'''
     
-    def _create_video(self, frames, camera_id, output_format):
+
+    def _create_video(self, frames, camera_id, output_format, fps):
+        if not frames:
+            return None
+        height, width = frames[0].shape[:2]
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        temp_video_path = os.path.join(self.temp_dir, f"{camera_id}_{timestamp}.{output_format}")
+
+        if output_format == "mp4":
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        elif output_format == "avi":
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        else:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+
+        out = cv2.VideoWriter(temp_video_path, fourcc, float(fps), (width, height))
+        for frame in frames:
+            out.write(frame)
+        out.release()
+        return temp_video_path
+    '''def _create_video(self, frames, camera_id, output_format):
         """Crear video desde frames"""
         if not frames:
             return None
@@ -159,9 +244,36 @@ class VideoReconstructor:
             out.write(frame)
         
         out.release()
-        return temp_video_path
+        return temp_video_path'''
     
     def reconstruct_clip(self, key, output_format="mp4"):
+        clip = self._find_clip(key)
+        if not clip:
+            return None, "No se encontro clip"
+
+        all_frames, fps = self._download_and_extract_clip(clip)
+        if not all_frames:
+            return None, "No se pudieron extraer frames"
+
+        # usa _create_video con fps
+        video_path = self._create_video(all_frames, camera_id="clip", output_format=output_format, fps=fps)
+        return video_path, None
+
+    def reconstruct_clip_play(self, key, output_format="mp4"):
+        clip = self._find_clip(key)
+        if not clip:
+            return None, "No se encontro clip"
+
+        all_frames, fps = self._download_and_extract_clip(clip)
+        if not all_frames:
+            return None, "No se pudieron extraer frames"
+
+        camera_id = key.split('/')[1] if len(key.split('/')) > 1 else "unknown"
+        # usa _create_video (o _create_clip_video si quieres redimensionar), pero con fps real:
+        video_path = self._create_clip_video(all_frames, camera_id, output_format, fps=fps)
+        return video_path, None
+
+    '''def reconstruct_clip(self, key, output_format="mp4"):
         """Reconstruir video desde clip de S3"""
         # 1. Encontrar batches en el rango de tiempo
         clip = self._find_clip(key)
@@ -198,7 +310,7 @@ class VideoReconstructor:
         camera_id = key.split('/')[1] if len(key.split('/')) > 1 else "unknown"
         video_path = self._create_clip_video(all_frames, camera_id, output_format)
         
-        return video_path, None
+        return video_path, None'''
 
     def _find_clip(self, key):
         """Encontrar clip en S3 dado su ubicacion"""
@@ -229,6 +341,43 @@ class VideoReconstructor:
             return None
     
     def _download_and_extract_clip(self, clip):
+        """Descargar y extraer frames de un solo clip; devuelve (frames, fps)"""
+        all_frames = []
+        fps = None
+        try:
+            response = self.s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=clip['key'])
+            tar_bytes = BytesIO(response['Body'].read())
+
+            with tarfile.open(fileobj=tar_bytes, mode='r:gz') as tar:
+                meta_member = tar.extractfile('metadata.json')
+                metadata = json.load(meta_member) if meta_member else {}
+
+                fps = (
+                    metadata.get('fps') or
+                    metadata.get('frame_rate') or
+                    metadata.get('frameRate')
+                )
+                if not fps:
+                    frame_count = metadata.get('frame_count') or metadata.get('frames') or metadata.get('num_frames')
+                    duration_sec = metadata.get('duration_seconds') or metadata.get('duration')
+                    if frame_count and duration_sec and duration_sec > 0:
+                        fps = float(frame_count) / float(duration_sec)
+
+                frame_files = [m for m in tar.getmembers() if m.name.startswith('frame_')]
+                frame_files.sort(key=lambda x: x.name)
+                for frame_file in frame_files:
+                    frame_data = tar.extractfile(frame_file).read()
+                    frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        all_frames.append(frame)
+        except Exception as e:
+            logger.error(f"Error procesando clip {clip['key']}: {str(e)}")
+            return [], None
+
+        if not fps:
+            fps = DEFAULT_FPS
+        return all_frames, fps
+    '''def _download_and_extract_clip(self, clip):
         """Descargar y extraer frames de clip"""
         all_frames = []
         
@@ -260,9 +409,54 @@ class VideoReconstructor:
             logger.error(f"Error procesando clip {clip['key']}: {str(e)}")
             all_frames = []
         
-        return all_frames
+        return all_frames'''
     
-    def _create_clip_video(self, frames, camera_id, output_format):
+    def _create_clip_video(self, frames, camera_id, output_format, fps):
+        if not frames:
+            return None
+        try:
+            temp_dir = tempfile.mkdtemp()
+            frame_paths = []
+            target_width, target_height = 640, 360
+
+            for i, frame in enumerate(frames):
+                frame_resized = self._resize_frame(frame, target_width, target_height)
+                fp = os.path.join(temp_dir, f"frame_{i:06d}.jpg")
+                cv2.imwrite(fp, frame_resized, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                frame_paths.append(fp)
+
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            temp_video_path = os.path.join(self.temp_dir, f"{camera_id}_{timestamp}.{output_format}")
+
+            import subprocess
+            cmd = [
+                'ffmpeg', '-y',
+                '-r', str(float(fps)),              # <--- usa fps real
+                '-i', os.path.join(temp_dir, 'frame_%06d.jpg'),
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-movflags', '+faststart',
+                temp_video_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+            for p in frame_paths:
+                try: os.remove(p)
+                except: pass
+            try: os.rmdir(temp_dir)
+            except: pass
+
+            if result.returncode == 0 and os.path.exists(temp_video_path):
+                return temp_video_path
+            else:
+                logger.error(f"ffmpeg failed: {result.stderr}")
+                return None
+        except Exception as e:
+            logger.error(f"Error en método alternativo: {str(e)}")
+            return None
+    '''def _create_clip_video(self, frames, camera_id, output_format):
         """Método alternativo para crear video con relación de aspecto 640x380"""
         if not frames:
             return None
@@ -327,7 +521,7 @@ class VideoReconstructor:
                 
         except Exception as e:
             logger.error(f"Error en método alternativo: {str(e)}")
-            return None
+            return None'''
 
     def _resize_frame(self, frame, target_width, target_height):
         """Redimensionar frame recortando para llenar el frame"""
@@ -816,3 +1010,4 @@ def play_clip():
     except Exception as e:
         logger.error(f"Error reproduciendo clip: {str(e)}")
         return jsonify({"error": str(e)}), 500
+    
