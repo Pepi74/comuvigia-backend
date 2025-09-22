@@ -91,7 +91,7 @@ class S3Client:
             logger.error(f"Error conectando a S3: {str(e)}")
             self.connected = False
     
-    def upload_batch(self, camera_id, frames, timestamp, custom_metadata=None, flag=False):
+    def upload_batch(self, camera_id, frames, timestamp, custom_metadata=None, flag=False, fps=30):
         try:
             if not frames:
                 logger.warning(f"Cámara {camera_id}: No hay frames para guardar")
@@ -112,7 +112,7 @@ class S3Client:
                 "timestamp": timestamp.isoformat(),
                 "frames_count": len(frames),
                 "resolution": f"{frames[0].shape[1]}x{frames[0].shape[0]}",
-                "fps": MAX_FPS,
+                "fps": fps,
                 "codec": "h264",
                 "version": "1.0"
             }
@@ -601,18 +601,20 @@ def save_frames():
     Espera: JSON con camera_id y frames (lista de base64 JPEG)
     """
     try:
+        fps_data = 30
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No se proporcionaron datos JSON'}), 400
         print(data['frames'])
         # Campos obligatorios
-        required_fields = ['camera_id', 'frames']
+        required_fields = ['camera_id', 'frames','fps']
         for field in required_fields:
             if field not in data:
                 return jsonify({'error': f'Campo requerido faltante: {field}'}), 400
         
         camera_id = data['camera_id']
         frames_data = data['frames']  # lista de strings base64
+        fps_data = data['fps']
         metadata = data.get('metadata', {})
         
         # Procesar frames: base64 JPEG → OpenCV Mat
@@ -648,7 +650,7 @@ def save_frames():
         # Subir batch a S3
         timestamp = datetime.now()
         s3_client = S3Client() 
-        success = s3_client.upload_batch(camera_id, processed_frames, timestamp, full_metadata, True)
+        success = s3_client.upload_batch(camera_id, processed_frames, timestamp, full_metadata, True,fps=fps_data)
         
         if success:
             return jsonify({

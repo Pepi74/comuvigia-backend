@@ -38,7 +38,7 @@ router.get('/', async (_, res) => {
 router.post('/nueva-alerta', async (req, res) => {
   try {
     const alerta = req.body;
-    const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, frames } = alerta;
+    const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, frames,fps } = alerta;
 
     // 1. Primero insertar la alerta en la BD
     let result;
@@ -76,7 +76,8 @@ router.post('/nueva-alerta', async (req, res) => {
           body: JSON.stringify({
             camera_id: id_camara,
             frames: frames,
-            metadata: metadata
+            metadata: metadata,
+            fps: fps
           })
         });
         console.log(response)
