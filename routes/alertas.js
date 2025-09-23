@@ -38,7 +38,7 @@ router.get('/', async (_, res) => {
 router.post('/nueva-alerta', async (req, res) => {
   try {
     const alerta = req.body;
-    const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, frames } = alerta;
+    const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, frames,fps } = alerta;
 
     // 1. Primero insertar la alerta en la BD
     let result;
@@ -55,9 +55,10 @@ router.post('/nueva-alerta', async (req, res) => {
     }
 
     const nuevaAlerta = result.rows[0];
-
+    console.log(typeof(frames))
     // 2. Si hay frames, guardarlos en S3 y obtener el key
     if (frames && frames.length > 0) {
+      console.log(id_camara)
       try {
         const metadata = {
           alert_id: nuevaAlerta.id,
@@ -67,7 +68,7 @@ router.post('/nueva-alerta', async (req, res) => {
         };
 
         // Llamar a la API de Python para guardar frames
-        const response = await fetch('http://python-service:5000/save-frames', {
+        const response = await fetch('http://python-stream:5000/save-frames', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -75,10 +76,11 @@ router.post('/nueva-alerta', async (req, res) => {
           body: JSON.stringify({
             camera_id: id_camara,
             frames: frames,
-            metadata: metadata
+            metadata: metadata,
+            fps: fps
           })
         });
-
+        console.log(response)
         const s3Result = await response.json();
 
         if (s3Result.success) {
@@ -99,7 +101,7 @@ router.post('/nueva-alerta', async (req, res) => {
         // No guardar la alerta completa si hay error con los frames
         res.status(500).json({ error: s3Error });
       }
-    }
+    } else{console.log("jaime")}
 
     // 4. Guardar en Redis y emitir WebSocket
     await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
@@ -227,12 +229,45 @@ router.put('/editar-descripcion/:id', async (req, res) => {
     await redisClient.lPush('alertas', nuevasAlertas.map(JSON.stringify));
     await redisClient.lTrim('alertas', 0, 99);
 
+    io.emit("nueva-descripcion", alertaActualizada);
+
     res.json({ ok: true, alerta: alertaActualizada });
   } catch (error) {
     console.error('Error actualizando descripción:', error);
     res.status(500).json({ error: 'Error actualizando la descripción' });
   }
 });
+
+router.delete('/eliminar-alerta/:id', async (req, res) => {
+  const id = req.params.id;
+  try {
+    // Eliminar en Postgres
+    await pool.query('DELETE FROM alertas WHERE id = $1', [id]);
+
+    // Eliminar en Redis
+    await redisClient.del(`alerta:${id}`);
+    await redisClient.sRem('alertas_no_vistas', id);
+
+    // Eliminar de la lista de últimas 100 alertas
+    const lista = await redisClient.lRange('alertas', 0, -1);
+    const nuevaLista = lista.filter(a => {
+      const parsed = JSON.parse(a);
+      return Number(parsed.id) !== Number(id);
+    });
+
+    // Sobrescribir lista (respetando límite de 100)
+    if (nuevaLista.length > 0) {
+      await redisClient.del('alertas');
+      await redisClient.lPush('alertas', nuevaLista);
+      await redisClient.lTrim('alertas', 0, 99);
+    }
+
+    res.json({ ok: true, message: `Alerta ${id} eliminada correctamente` });
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: "Error eliminando alerta" });
+  }
+})
 
 // Obtener alertas por id de camara
 router.get('/camara/:id_camara', async (req, res) => {
@@ -416,5 +451,6 @@ router.get('/estadisticas-totales', async (req, res) => {
     }
   }
 });
+
 
 export default router

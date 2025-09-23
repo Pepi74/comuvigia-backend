@@ -25,8 +25,10 @@ import tempfile
 import subprocess, shlex
 from flask import Flask, Response, jsonify, request
 from video_reconstructor import video_bp, video_reconstructor
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": os.environ["FRONTEND_URL"]}})
 app.register_blueprint(video_bp, url_prefix='/')
 start_time = time.time()
 
@@ -112,7 +114,7 @@ class S3Client:
             Config=self.transfer_cfg
         )
 
-    def upload_batch(self, camera_id, frames, timestamp, custom_metadata=None, flag=False):
+    def upload_batch(self, camera_id, frames, timestamp, custom_metadata=None, flag=False, fps=30):
         try:
             if not frames:
                 logger.warning(f"Cámara {camera_id}: No hay frames para guardar")
@@ -166,7 +168,7 @@ class S3Client:
                 "timestamp": timestamp.isoformat(),
                 "frames_count": len(frames),
                 "resolution": f"{frames[0].shape[1]}x{frames[0].shape[0]}",
-                "fps": MAX_FPS,
+                "fps": fps,
                 "duration_seconds": round(duration_seconds, 3),
                 "codec": "h264",
                 "version": "1.1",
@@ -736,18 +738,20 @@ def save_frames():
     Soporta: base64 con/ sin header data:image y formato estructurado {"image_data": ...}
     """
     try:
+        fps_data = 30
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No se proporcionaron datos JSON'}), 400
         
         # Verificar campos obligatorios
-        required_fields = ['camera_id', 'frames']
+        required_fields = ['camera_id', 'frames', 'fps']
         for field in required_fields:
             if field not in data:
                 return jsonify({'error': f'Campo requerido faltante: {field}'}), 400
         
         camera_id = data['camera_id']
         frames_data = data['frames']
+        fps_data = data['fps']
         metadata = data.get('metadata', {})
         
         # Procesar los frames
@@ -791,7 +795,7 @@ def save_frames():
             'end_time': recording_end
         }
 
-        success = S3.upload_batch(camera_id, processed_frames, timestamp, full_metadata, True)
+        success = S3.upload_batch(camera_id, processed_frames, timestamp, full_metadata, True,fps=fps_data)
         if success:
             return jsonify({
                 'success': True,
