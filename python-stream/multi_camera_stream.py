@@ -47,22 +47,11 @@ S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
 S3_BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
 S3_REGION = "us-east-1"
 
-# Configuración de cámaras / luego que vengan de una api
-'''CAMERAS = {
-    "cam1": {
-        "link_camara": "rtsp://prueba:12341234@host.docker.internal:8554/live",
-        "estado_camara": True
-    }
-    # Agrega más cámaras aquí
-}'''
+# Obtención de cámaras
 url = "http://backend:3000/api/camaras"
-
 payload = {}
 headers = {}
-
 response = requests.request("GET", url, headers=headers, data=payload)
-
-print(response.text)
 CAMERAS = json.loads(response.text)
 
 # Logs
@@ -133,7 +122,6 @@ class S3Client:
             start_time = None
             end_time = None
             duration_seconds = len(frames) / MAX_FPS  # Valor por defecto
-            # DEBUG: Verificar que la duración sea razonable
             expected_duration = BATCH_SIZE / MAX_FPS
             if duration_seconds < expected_duration * 0.5:  # Menos del 50% de lo esperado
                 logger.warning(f"Cámara {camera_id}: Duración sospechosa: "
@@ -168,11 +156,8 @@ class S3Client:
                         logger.warning(f"Cámara {camera_id}: Duración inválida, usando cálculo por frames")
             
             # Asegurar que timestamp sea datetime
-            if isinstance(timestamp, dict):
-                logger.warning(f"Cámara {camera_id}: timestamp es diccionario, convirtiendo")
-                timestamp = datetime.now()
-            elif not isinstance(timestamp, datetime):
-                logger.warning(f"Cámara {camera_id}: timestamp no es datetime, usando ahora")
+            if isinstance(timestamp, dict) or not isinstance(timestamp, datetime):
+                logger.warning(f"Cámara {camera_id}: timestamp inválido, usando ahora()")
                 timestamp = datetime.now()
 
             # Crear metadata con información crucial
@@ -200,9 +185,7 @@ class S3Client:
                 for k, v in custom_metadata.items():
                     if k in ['start_time', 'end_time']:
                         continue
-                    elif isinstance(v, datetime):
-                        normalized_custom[k] = v.isoformat()
-                    elif hasattr(v, 'isoformat'):
+                    elif isinstance(v, datetime) or hasattr(v, 'isoformat'):
                         normalized_custom[k] = v.isoformat()
                     elif isinstance(v, (dict, list)):
                         try:
@@ -215,12 +198,11 @@ class S3Client:
             else:
                 metadata = base_metadata
             
-            # CREAR ARCHIVO TEMPORAL PRIMERO (CORRECCIÓN PRINCIPAL)
+            # Crear tar.gz en archivo temporal
             with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as temp_file:
                 temp_path = temp_file.name
             
             try:
-                # Crear tar.gz en archivo temporal (más seguro que BytesIO)
                 with tarfile.open(temp_path, 'w:gz') as tar:
                     # Agregar metadata
                     metadata_json = json.dumps(metadata, ensure_ascii=False, indent=2)
@@ -257,10 +239,9 @@ class S3Client:
                             logger.error(f"Cámara {camera_id}: Error procesando frame {i}: {str(e)}")
                             continue
                 
-                # VERIFICAR INTEGRIDAD DEL ARCHIVO (NUEVO)
+                # Verificar integridad del tar.gz
                 try:
                     with tarfile.open(temp_path, 'r:gz') as test_tar:
-                        # Verificar que se pueda leer correctamente
                         members = test_tar.getnames()
                         frame_files = [m for m in members if m.startswith('frame_')]
                         if len(frame_files) != len(frames):
@@ -295,7 +276,7 @@ class S3Client:
                     elif v is not None:
                         s3_metadata[k] = str(v)
                 
-                # Subir a S3 desde archivo temporal (más confiable)
+                # Subir a S3 desde archivo temporal
                 with open(temp_path, 'rb') as f:
                     self.client.put_object(
                         Bucket=S3_BUCKET_NAME,
@@ -328,7 +309,6 @@ class S3Client:
                 }
                 
             finally:
-                # Limpiar archivo temporal
                 try:
                     os.unlink(temp_path)
                 except:
@@ -336,12 +316,11 @@ class S3Client:
                     
         except Exception as e:
             logger.error(f"Cámara {camera_id}: Error subiendo batch: {str(e)}")
-            # Asegurar limpieza del archivo temporal en caso de error
             try:
                 if 'temp_path' in locals() and os.path.exists(temp_path):
                     os.unlink(temp_path)
-            except Exception as e:
-                logger.warning(f"Cámara {camera_id}: Error eliminando archivo temporal: {str(e)}")
+            except Exception as e2:
+                logger.warning(f"Cámara {camera_id}: Error eliminando archivo temporal: {str(e2)}")
             return False
 
 S3 = S3Client()
@@ -355,18 +334,13 @@ class VideoStream:
         self.lock = Lock()
         self.running = False
         self.thread = None
-        '''self.frames_buffer = deque(maxlen=BATCH_SIZE * 3)  # Buffer circular
-        self.buffer_timestamps = deque(maxlen=BATCH_SIZE * 3)  # Timestamps de cada frame'''
         self.frames_buffer = deque(maxlen=OVERLAP_FRAMES + MAX_FPS * 3)  # p.ej. 60 + 90 = 150 frames
         self.buffer_timestamps = deque(maxlen=OVERLAP_FRAMES + MAX_FPS * 3)  # Timestamps
         self.buffer_lock = threading.RLock()
         self.last_batch_time = time.time()
         self.s3_client = S3
         self.cap = None
-        self.connection_attempts = 0
-        self.last_error = None
         self.last_frame_time = time.time()
-        self.last_successful_frame_time = time.time()
         self.last_check_time = time.time() 
         self.segmenter = FFmpegSegmenter(camera_id, link_camara, seg_seconds=BATCH_INTERVAL)
         self.preview_source = None
@@ -391,8 +365,10 @@ class VideoStream:
                 if self.segmenter.proc and self.segmenter.proc.poll() is not None:
                     logger.warning(f"Cámara {self.camera_id}: FFmpeg caído, reiniciando")
                     if self.cap:
-                        try: self.cap.release()
-                        except: pass
+                        try: 
+                            self.cap.release()
+                        except Exception:
+                            pass
                         self.cap = None
                     self.segmenter.start()
                     self.preview_source = self.segmenter.preview_url
@@ -425,7 +401,6 @@ class VideoStream:
                 with self.buffer_lock:
                     self.frames_buffer.append(processed_frame)
                     self.buffer_timestamps.append(frame_time)
-                    self.last_successful_frame_time = frame_time
                     self.frame = processed_frame
                 
                 # Monitorear FPS
@@ -450,7 +425,7 @@ class VideoStream:
                             )
                     self.last_fps_log = current_time
 
-                # Verificar batch (menos frecuente)
+                # Recolectar y subir segmentos .mkv generados por ffmpeg
                 if current_time - self.last_check_time > 10:
                     self.collect_and_upload_segments()
                     self.last_check_time = current_time
@@ -560,7 +535,6 @@ class VideoStream:
             # Configurar propiedades
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             #self.cap.set(cv2.CAP_PROP_FPS, MAX_FPS)
-            
             logger.info(f"Cámara {self.camera_id}: Preview reconectado exitosamente")
             return True
             
@@ -581,38 +555,11 @@ class VideoStream:
         with self.buffer_lock:
             current_size = len(self.frames_buffer)
             if current_size > frames_to_maintain:
-                # Mantener los frames más recientes (incluyendo overlap)
-                self.frames_buffer = deque(
-                    list(self.frames_buffer)[-frames_to_maintain:], 
-                    maxlen=BATCH_SIZE * 3
-                )
-                self.buffer_timestamps = deque(
-                    list(self.buffer_timestamps)[-frames_to_maintain:], 
-                    maxlen=BATCH_SIZE * 3
-                )
+                self.frames_buffer = deque(list(self.frames_buffer)[-frames_to_maintain:], 
+                                           maxlen=OVERLAP_FRAMES + MAX_FPS * 3)
+                self.buffer_timestamps = deque(list(self.buffer_timestamps)[-frames_to_maintain:], 
+                                               maxlen=OVERLAP_FRAMES + MAX_FPS * 3)
                 logger.info(f"Cámara {self.camera_id}: Buffer mantenido ({frames_to_maintain} frames)")
-
-    def check_batch_save(self):
-        """Verificar batch de manera eficiente"""
-        current_time = time.time()
-        time_elapsed = current_time - self.last_batch_time
-        
-        # Verificación rápida sin lock primero
-        if time_elapsed < 30:  # Si no ha pasado tiempo suficiente, salir rápido
-            return
-        
-        # Solo obtener longitud del buffer si es necesario
-        with self.buffer_lock:
-            frames_accumulated = len(self.frames_buffer)
-        
-        # Condiciones simplificadas
-        time_condition = time_elapsed >= BATCH_INTERVAL + 10
-        frames_condition = frames_accumulated >= BATCH_SIZE + OVERLAP_FRAMES
-        
-        if time_condition or frames_condition:
-            logger.info(f"Cámara {self.camera_id}: Guardando batch - "
-                    f"Time: {time_elapsed:.1f}s, Frames: {frames_accumulated}")
-            self.save_batch()
 
     def collect_and_upload_segments(self):
         try:
@@ -666,7 +613,7 @@ class FFmpegSegmenter:
         args = ["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error"]
 
         if is_hls:
-            # Fuente HLS/HTTP: NO usar -rtsp_transport; agrega flags de reconexión
+            # Fuente HLS/HTTP
             args += [
                 "-reconnect", "1",
                 "-reconnect_streamed", "1",
@@ -678,7 +625,7 @@ class FFmpegSegmenter:
                 "-i", self.stream_url,
             ]
         else:
-            # Fuente RTSP (o lo que no sea HLS). Para RTSP, sí usamos TCP.
+            # Fuente RTSP
             if u.scheme.lower() == "rtsp":
                 args += ["-rtsp_transport", "tcp"]
             args += ["-i", self.stream_url]
@@ -702,49 +649,43 @@ class FFmpegSegmenter:
 
 # Inicializar streams para todas las cámaras
 video_streams = {}
-if isinstance(CAMERAS, str):
-    cameras_data = json.loads(CAMERAS)
-else:
-    cameras_data = CAMERAS
+cameras_data = json.loads(CAMERAS) if isinstance(CAMERAS, str) else CAMERAS
 for camera in cameras_data:
     cam_id = camera["id"]
     config = camera
     
     if config["estado_camara"] and config["link_camara"] and config["link_camara_externo"]:
         logger.info(f"Intentando inicializar cámara {cam_id}: {config['link_camara']}")
-        
         try:
-            # NO usar requests.head() para streams de video - usualmente falla
-            # Inicializar directamente la cámara
             video_streams[cam_id] = VideoStream(cam_id, config["link_camara"])
             video_streams[cam_id].start()
             logger.info(f"Cámara {cam_id} inicializada - Estado: {video_streams[cam_id].running}")
             
         except Exception as e:
             logger.error(f"Error inicializando cámara {cam_id}: {str(e)}")
-            # Aún así crear el objeto para debugging
-            video_streams[cam_id] = VideoStream(cam_id, config["link_camara"])
-            logger.warning(f"Cámara {cam_id} creada pero no iniciada debido a error")
-
-# Log todas las cámaras inicializadas
+            #video_streams[cam_id] = VideoStream(cam_id, config["link_camara"])
+            #logger.warning(f"Cámara {cam_id} creada pero no iniciada debido a error")
 logger.info(f"Cámaras en video_streams: {list(video_streams.keys())}")
 
 def generate_frames(camera_id):
-    if camera_id not in video_streams:
+    try:
+        camera_id_int = int(camera_id)
+    except ValueError:
+        yield error_frame("Invalid camera ID")
+        return
+    
+    if camera_id_int not in video_streams:
         yield error_frame("Camera not found")
         return
         
-    stream = video_streams[camera_id]
+    stream = video_streams[camera_id_int]
     last_time = time.time()
     
     while True:
         frame = stream.get_frame()
-        
         if frame:
             yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-            
-            # Control de FPS
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')            
             elapsed = time.time() - last_time
             delay = max(0, (1/MAX_FPS) - elapsed)
             time.sleep(delay)
@@ -769,11 +710,7 @@ def video_feed(camera_id):
 @app.route('/cameras')
 def list_cameras():
     cameras_list = []
-    if isinstance(CAMERAS, str):
-        cameras_data = json.loads(CAMERAS)
-    else:
-        cameras_data = CAMERAS
-    
+    cameras_data = json.loads(CAMERAS) if isinstance(CAMERAS, str) else CAMERAS
     for camera in cameras_data:
         cameras_list.append({
             "id": camera["id"],
@@ -781,7 +718,6 @@ def list_cameras():
             "nombre": camera["nombre"],
             "posicion": camera["posicion"],
             "direccion": camera["direccion"],
-            "estado_camara": camera["estado_camara"]
         })
     return jsonify(cameras_list)
 
@@ -797,11 +733,10 @@ def manage_config():
 def save_frames():
     """
     API para guardar frames en el bucket S3/MinIO
-    Soporta múltiples formatos: base64, bytes, o frames ya procesados
+    Soporta: base64 con/ sin header data:image y formato estructurado {"image_data": ...}
     """
     try:
         data = request.get_json()
-        
         if not data:
             return jsonify({'error': 'No se proporcionaron datos JSON'}), 400
         
@@ -820,7 +755,6 @@ def save_frames():
         
         for frame_data in frames_data:
             frame = None
-            
             # Diferentes formatos de frame
             if isinstance(frame_data, str) and frame_data.startswith('data:image'):
                 # Base64 con header data:image
@@ -842,7 +776,6 @@ def save_frames():
         
         # Subir batch a S3
         timestamp = datetime.now()
-
         recording_duration = len(processed_frames) / MAX_FPS
         recording_start = timestamp - timedelta(seconds=recording_duration)
         recording_end = timestamp
@@ -858,9 +791,7 @@ def save_frames():
             'end_time': recording_end
         }
 
-        s3_client = S3
-        success = s3_client.upload_batch(camera_id, processed_frames, timestamp, full_metadata, True)
-        
+        success = S3.upload_batch(camera_id, processed_frames, timestamp, full_metadata, True)
         if success:
             return jsonify({
                 'success': True,
@@ -966,7 +897,6 @@ def decode_base64_frame(base64_string):
         # Remover el header "data:image/jpeg;base64,"
         if ',' in base64_string:
             base64_string = base64_string.split(',')[1]
-        
         image_data = base64.b64decode(base64_string)
         nparr = np.frombuffer(image_data, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -1008,17 +938,14 @@ def debug_camera(camera_id):
             return jsonify({"error": f"Cámara {camera_id} no encontrada"}), 404
         
         stream = video_streams[camera_id_int]
-        
         with stream.buffer_lock:
             status = {
                 "camera_id": camera_id_int,
                 "stream_url": stream.link_camara,
                 "running": stream.running,
                 "capture_active": stream.is_capture_active(),
-                "has_frame": stream.frames_buffer is not None,
+                "has_frame": stream.frame is not None,
                 "frames_buffer_size": len(stream.frames_buffer),
-                "last_error": stream.last_error,
-                "s3_connected": stream.s3_client.connected if hasattr(stream, 's3_client') else False,
                 "buffer_duration": f"{(len(stream.frames_buffer) / MAX_FPS):.1f}s",
                 "time_since_last_batch": round(time.time() - stream.last_batch_time, 1),
                 "batch_config": {
@@ -1029,7 +956,7 @@ def debug_camera(camera_id):
                     "interval_seconds": BATCH_INTERVAL
                 },
                 "current_buffer_health": f"{len(stream.frames_buffer)}/{BATCH_SIZE}",
-                "connection_attempts": stream.connection_attempts
+                "s3_connected": stream.s3_client.connected if hasattr(stream, 's3_client') else False,
             }
         
         return jsonify(status)
