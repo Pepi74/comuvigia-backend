@@ -1,39 +1,29 @@
-# ComuVigIA Backend
+# ComuVigIA Stream Camara
 
-Backend de la plataforma ComuVigIA desarrollado en NodeJS.
-
-## Instalación
-
-Utilizar el siguiente comando en una terminal
-
+### 1. (Recomendado) Crear y seleccionar entorno virtual
 ```
-npm install
+python -m venv stream-env
+stream-env\Scripts\activate
 ```
-
-## Variables de entorno
-
-Realizar una copia del archivo `.env.example` y renombrarlo a `.env`, luego rellenar los campos necesarios de puerto y credenciales de base de datos Postgres.
-
-## Ejecución
-
-Para ejecutar el backend en modo producción, utilizar el siguiente comando
-
+### 2. Ejecutar instalación (requirements.txt):
 ```
-npm run start
+pip install -r requirements.txt
 ```
 
-Para ejecutar el backend en modo desarrollador, utilizar el siguiente comando
+### 3. Ejecución
+```
+python camera_stream.py
+```
 
-```
-npm run dev
-```
 
-## Levantar Bases de datos + Backend
-```
-docker compose up -d --build
 
-```
-## Solo Backend
-```
-docker compose up -d --build backend
-```
+
+## Ejecución de setup para cámaras.
+
+- Conectar cámaras
+- Para la RTSP solo hay que obtener ip y luego conectarse (*Falta ver como usar el router*)
+- Para la cámara web: 
+    - Abrir OBS &rarr; Ajustes &rarr; Emisión
+    - Crear transmisión personalizada
+    - Abrir MediaMTX agregando en mediamtx.yml los *paths* de las cámaras
+
