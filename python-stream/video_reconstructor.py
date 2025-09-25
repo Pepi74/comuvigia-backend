@@ -4,13 +4,15 @@ import cv2
 import numpy as np
 import tempfile
 import os
+import re
 import json
 import tarfile
 import logging
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import Blueprint, send_file, jsonify, request
 from botocore.client import Config
+from functools import lru_cache
 
 # Logs
 os.makedirs("/logs", exist_ok=True)
@@ -31,9 +33,9 @@ ch.setFormatter(fmt)
 logger.addHandler(ch)
 
 MAX_FPS = 30
-# Constante de fallback si no viene en metadata
-DEFAULT_FPS = 12  # ajusta a tu realidad si sabes el valor típico
-
+DEFAULT_FPS = 12
+BATCHES_PREFIX = "batches"
+CLIPS_PREFIX = "clips"
 video_bp = Blueprint('video', __name__)
 
 class VideoReconstructor:
@@ -42,42 +44,33 @@ class VideoReconstructor:
         self.temp_dir = tempfile.gettempdir()
     
     def reconstruct_video(self, camera_id, start_time, end_time, output_format="mp4"):
-        batches = self._find_batches_in_range(camera_id, start_time, end_time)
-        if not batches:
-            return None, "No se encontraron batches en el rango especificado"
-
-        all_frames, fps = self._download_and_extract_batches(batches)
-        if not all_frames:
-            return None, "No se pudieron extraer frames"
-
-        video_path = self._create_video(all_frames, camera_id, output_format, fps=fps)
-        return video_path, None
-    '''def reconstruct_video(self, camera_id, start_time, end_time, output_format="mp4"):
         """Reconstruir video desde batches de S3"""
         # 1. Encontrar batches en el rango de tiempo
         batches = self._find_batches_in_range(camera_id, start_time, end_time)
-        
         if not batches:
             return None, "No se encontraron batches en el rango especificado"
-        
         # 2. Descargar y extraer batches
-        all_frames = self._download_and_extract_batches(batches)
-        
+        all_frames, fps = self._download_and_extract_batches(batches)
         if not all_frames:
             return None, "No se pudieron extraer frames"
-        
         # 3. Crear video
-        video_path = self._create_video(all_frames, camera_id, output_format)
-        
-        return video_path, None'''
+        video_path = self._create_video(all_frames, camera_id, output_format, fps=fps)
+        return video_path, None
     
     def _find_batches_in_range(self, camera_id, start_time, end_time):
-        """Encontrar batches en S3 dentro del rango de tiempo"""
+        """Encontrar batches en S3 considerando zona horaria"""
         batches = []
         
-        # Generar prefijos para buscar (por hora)
-        current_time = start_time
-        while current_time <= end_time:
+        # Convertir a UTC si es necesario (asumiendo que los batches están en UTC)
+        utc_start = start_time.astimezone(timezone.utc) if start_time.tzinfo else start_time
+        utc_end = end_time.astimezone(timezone.utc) if end_time.tzinfo else end_time
+        
+        # Buscar en un rango más amplio para cubrir diferencias horarias
+        search_start = utc_start - timedelta(hours=4)  # -4 horas para cobertura
+        search_end = utc_end + timedelta(hours=4)      # +4 horas para cobertura
+        
+        current_time = search_start
+        while current_time <= search_end:
             prefix = f"batches/{camera_id}/{current_time.strftime('%Y/%m/%d/%H')}/"
             
             try:
@@ -88,25 +81,36 @@ class VideoReconstructor:
                 
                 if 'Contents' in response:
                     for obj in response['Contents']:
-                        # Extraer timestamp del nombre del archivo
                         filename = obj['Key'].split('/')[-1]
                         if filename.endswith('.tar.gz'):
-                            batch_time_str = filename.split('_')[1] + '_' + filename.split('_')[2].split('.')[0]
-                            batch_time = datetime.strptime(batch_time_str, '%Y%m%d_%H%M%S')
-                            
-                            if start_time <= batch_time <= end_time:
-                                batches.append({
-                                    'key': obj['Key'],
-                                    'time': batch_time,
-                                    'size': obj['Size']
-                                })
+                            try:
+                                # Extraer timestamp del nombre (asumiendo formato: 1_20250921_015047.tar.gz)
+                                time_str = filename.split('_')[1] + '_' + filename.split('_')[2].split('.')[0]
+                                batch_time = datetime.strptime(time_str, '%Y%m%d_%H%M%S')
+                                
+                                # Asumir que el batch está en UTC
+                                batch_time_utc = batch_time.replace(tzinfo=timezone.utc)
+                                
+                                # Convertir a hora local para comparación
+                                batch_time_local = batch_time_utc.astimezone()
+                                
+                                if start_time <= batch_time_local <= end_time:
+                                    batches.append({
+                                        'key': obj['Key'],
+                                        'time': batch_time_local,  # Guardar en hora local
+                                        'size': obj['Size'],
+                                        'utc_time': batch_time_utc  # Guardar también UTC
+                                    })
+                                    
+                            except Exception as e:
+                                logger.warning(f"Error parsing filename {filename}: {str(e)}")
+                                continue
             
             except Exception as e:
                 logger.error(f"Error buscando batches: {str(e)}")
             
             current_time += timedelta(hours=1)
         
-        # Ordenar por tiempo
         batches.sort(key=lambda x: x['time'])
         return batches
     
@@ -131,9 +135,10 @@ class VideoReconstructor:
                         metadata.get('frame_rate') or
                         metadata.get('frameRate')
                     )
-
+                    logger.info(f"Batch {batch['key']} metadata fps: {batch_fps}")
                     # 2) si no hay fps, intenta derivarlo
                     if not batch_fps:
+                        logger.info(f"Batch {batch['key']} no tiene fps en metadata, intentando derivar")
                         frame_count = metadata.get('frame_count') or metadata.get('frames') or metadata.get('num_frames')
                         duration_sec = metadata.get('duration_seconds') or metadata.get('duration')
                         if frame_count and duration_sec and duration_sec > 0:
@@ -141,6 +146,7 @@ class VideoReconstructor:
 
                     # 3) primer fps que encontremos será el que usaremos (asumiendo homogéneo)
                     if not fps and batch_fps:
+                        logger.info(f"Usando fps {batch_fps} del batch {batch['key']}")
                         fps = float(batch_fps)
 
                     # Frames
@@ -162,62 +168,8 @@ class VideoReconstructor:
             fps = DEFAULT_FPS
 
         return all_frames, fps
-    '''def _download_and_extract_batches(self, batches):
-        """Descargar y extraer frames de batches"""
-        all_frames = []
-        
-        for batch in batches:
-            try:
-                # Descargar batch
-                response = self.s3_client.get_object(
-                    Bucket=S3_BUCKET_NAME,
-                    Key=batch['key']
-                )
-                
-                # Extraer tar.gz
-                tar_bytes = BytesIO(response['Body'].read())
-                
-                with tarfile.open(fileobj=tar_bytes, mode='r:gz') as tar:
-                    # Leer metadata
-                    metadata_file = tar.extractfile('metadata.json')
-                    metadata = json.load(metadata_file)
-                    
-                    # Extraer frames en orden
-                    frame_files = [m for m in tar.getmembers() if m.name.startswith('frame_')]
-                    frame_files.sort(key=lambda x: x.name)
-                    
-                    for frame_file in frame_files:
-                        frame_data = tar.extractfile(frame_file).read()
-                        frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
-                        all_frames.append(frame)
-                        
-            except Exception as e:
-                logger.error(f"Error procesando batch {batch['key']}: {str(e)}")
-                continue
-        
-        return all_frames'''
-    
 
     def _create_video(self, frames, camera_id, output_format, fps):
-        if not frames:
-            return None
-        height, width = frames[0].shape[:2]
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        temp_video_path = os.path.join(self.temp_dir, f"{camera_id}_{timestamp}.{output_format}")
-
-        if output_format == "mp4":
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        elif output_format == "avi":
-            fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        else:
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-
-        out = cv2.VideoWriter(temp_video_path, fourcc, float(fps), (width, height))
-        for frame in frames:
-            out.write(frame)
-        out.release()
-        return temp_video_path
-    '''def _create_video(self, frames, camera_id, output_format):
         """Crear video desde frames"""
         if not frames:
             return None
@@ -237,43 +189,16 @@ class VideoReconstructor:
         else:
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         
-        out = cv2.VideoWriter(temp_video_path, fourcc, MAX_FPS, (width, height))
+        out = cv2.VideoWriter(temp_video_path, fourcc, float(fps), (width, height))
         
         # Escribir frames
         for frame in frames:
             out.write(frame)
         
         out.release()
-        return temp_video_path'''
+        return temp_video_path
     
     def reconstruct_clip(self, key, output_format="mp4"):
-        clip = self._find_clip(key)
-        if not clip:
-            return None, "No se encontro clip"
-
-        all_frames, fps = self._download_and_extract_clip(clip)
-        if not all_frames:
-            return None, "No se pudieron extraer frames"
-
-        # usa _create_video con fps
-        video_path = self._create_video(all_frames, camera_id="clip", output_format=output_format, fps=fps)
-        return video_path, None
-
-    def reconstruct_clip_play(self, key, output_format="mp4"):
-        clip = self._find_clip(key)
-        if not clip:
-            return None, "No se encontro clip"
-
-        all_frames, fps = self._download_and_extract_clip(clip)
-        if not all_frames:
-            return None, "No se pudieron extraer frames"
-
-        camera_id = key.split('/')[1] if len(key.split('/')) > 1 else "unknown"
-        # usa _create_video (o _create_clip_video si quieres redimensionar), pero con fps real:
-        video_path = self._create_clip_video(all_frames, camera_id, output_format, fps=fps)
-        return video_path, None
-
-    '''def reconstruct_clip(self, key, output_format="mp4"):
         """Reconstruir video desde clip de S3"""
         # 1. Encontrar batches en el rango de tiempo
         clip = self._find_clip(key)
@@ -282,16 +207,16 @@ class VideoReconstructor:
             return None, "No se encontro clip"
         
         # 2. Descargar y extraer batches
-        all_frames = self._download_and_extract_clip(clip)
+        all_frames, fps = self._download_and_extract_clip(clip)
         
         if not all_frames:
             return None, "No se pudieron extraer frames"
         
         # 3. Crear video
-        video_path = self._create_video(all_frames, output_format)
+        video_path = self._create_video(all_frames, camera_id="clip", output_format=output_format, fps=fps)
         
         return video_path, None
-    
+
     def reconstruct_clip_play(self, key, output_format="mp4"):
         """Reconstruir video desde clip de S3"""
         # 1. Encontrar clip
@@ -301,16 +226,16 @@ class VideoReconstructor:
             return None, "No se encontro clip"
         
         # 2. Descargar y extraer clip
-        all_frames = self._download_and_extract_clip(clip)
+        all_frames, fps = self._download_and_extract_clip(clip)
         
         if not all_frames:
             return None, "No se pudieron extraer frames"
         
         # 3. Crear video - CORREGIDO: usar _create_video en lugar de _create_clip_video
         camera_id = key.split('/')[1] if len(key.split('/')) > 1 else "unknown"
-        video_path = self._create_clip_video(all_frames, camera_id, output_format)
+        video_path = self._create_clip_video(all_frames, camera_id, output_format, fps=fps)
         
-        return video_path, None'''
+        return video_path, None
 
     def _find_clip(self, key):
         """Encontrar clip en S3 dado su ubicacion"""
@@ -377,39 +302,6 @@ class VideoReconstructor:
         if not fps:
             fps = DEFAULT_FPS
         return all_frames, fps
-    '''def _download_and_extract_clip(self, clip):
-        """Descargar y extraer frames de clip"""
-        all_frames = []
-        
-        try:
-            # Descargar clip
-            response = self.s3_client.get_object(
-                Bucket=S3_BUCKET_NAME,
-                Key=clip['key']
-            )
-            
-            # Extraer tar.gz
-            tar_bytes = BytesIO(response['Body'].read())
-            
-            with tarfile.open(fileobj=tar_bytes, mode='r:gz') as tar:
-                # Leer metadata
-                metadata_file = tar.extractfile('metadata.json')
-                metadata = json.load(metadata_file)
-                
-                # Extraer frames en orden
-                frame_files = [m for m in tar.getmembers() if m.name.startswith('frame_')]
-                frame_files.sort(key=lambda x: x.name)
-                
-                for frame_file in frame_files:
-                    frame_data = tar.extractfile(frame_file).read()
-                    frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
-                    all_frames.append(frame)
-                    
-        except Exception as e:
-            logger.error(f"Error procesando clip {clip['key']}: {str(e)}")
-            all_frames = []
-        
-        return all_frames'''
     
     def _create_clip_video(self, frames, camera_id, output_format, fps):
         if not frames:
@@ -456,73 +348,7 @@ class VideoReconstructor:
         except Exception as e:
             logger.error(f"Error en método alternativo: {str(e)}")
             return None
-    '''def _create_clip_video(self, frames, camera_id, output_format):
-        """Método alternativo para crear video con relación de aspecto 640x380"""
-        if not frames:
-            return None
-        
-        try:
-            # Crear directorio temporal para frames
-            temp_dir = tempfile.mkdtemp()
-            frame_paths = []
-            
-            # Dimensiones objetivo
-            target_width = 640
-            target_height = 360
-            
-            logger.info(f"Redimensionando frames a {target_width}x{target_height}")
-            
-            # Guardar cada frame redimensionado
-            for i, frame in enumerate(frames):
-                # Redimensionar manteniendo relación de aspecto y recortando
-                frame_resized = self._resize_frame(frame, target_width, target_height)
-                
-                frame_path = os.path.join(temp_dir, f"frame_{i:06d}.jpg")
-                cv2.imwrite(frame_path, frame_resized, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                frame_paths.append(frame_path)
-            
-            # Crear video con ffmpeg
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            temp_video_path = os.path.join(self.temp_dir, f"{camera_id}_{timestamp}.{output_format}")
-            
-            import subprocess
-            cmd = [
-                'ffmpeg', '-y', 
-                '-r', str(MAX_FPS),
-                '-i', os.path.join(temp_dir, 'frame_%06d.jpg'),
-                '-c:v', 'libx264',
-                '-pix_fmt', 'yuv420p',
-                '-preset', 'fast',
-                '-crf', '23',
-                '-movflags', '+faststart',
-                '-vf', f'scale={target_width}:{target_height}:force_original_aspect_ratio=disable',  # Forzar dimensiones exactas
-                temp_video_path
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            
-            # Limpiar archivos temporales
-            for frame_path in frame_paths:
-                try:
-                    os.remove(frame_path)
-                except:
-                    pass
-            try:
-                os.rmdir(temp_dir)
-            except:
-                pass
-            
-            if result.returncode == 0 and os.path.exists(temp_video_path):
-                logger.info(f"Video creado con dimensiones {target_width}x{target_height}")
-                return temp_video_path
-            else:
-                logger.error(f"ffmpeg failed: {result.stderr}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error en método alternativo: {str(e)}")
-            return None'''
-
+    
     def _resize_frame(self, frame, target_width, target_height):
         """Redimensionar frame recortando para llenar el frame"""
         height, width = frame.shape[:2]
@@ -546,7 +372,93 @@ class VideoReconstructor:
         
         return cropped
 
-    
+    def _list_mkv_in_range(self, camera_id, start_time, end_time):
+        """
+        Lista grabaciones MKV bajo batches/<camera_id>/YYYY/MM/DD/HH/*.mkv
+        Devuelve: [{'key','time','size','utc_time','kind': 'mkv'}, ...]
+        """
+        # Normaliza rango a aware local y deriva UTC para búsqueda
+        start_time = _ensure_local_aware(start_time)
+        end_time   = _ensure_local_aware(end_time)
+
+        utc_start = start_time.astimezone(timezone.utc)
+        utc_end   = end_time.astimezone(timezone.utc)
+
+        items = []
+        ts_regex = re.compile(r'(\d{8})_(\d{6})')  # p.ej. 20250921_015047
+
+        # margen para desfaces horarios
+        search_start = utc_start - timedelta(hours=4)
+        search_end   = utc_end + timedelta(hours=4)
+
+        current_time = search_start
+        while current_time <= search_end:
+            prefix = f"{BATCHES_PREFIX}/{camera_id}/{current_time.strftime('%Y/%m/%d/%H')}/"
+            continuation = None
+
+            while True:
+                kwargs = {
+                    "Bucket": S3_BUCKET_NAME,
+                    "Prefix": prefix,
+                }
+                if continuation:
+                    kwargs["ContinuationToken"] = continuation
+
+                try:
+                    resp = self.s3_client.list_objects_v2(**kwargs)
+                except Exception as e:
+                    logger.error(f"Error listando MKV en {prefix}: {e}")
+                    break
+
+                for obj in resp.get("Contents", []):
+                    key = obj["Key"]
+                    name = key.split("/")[-1]
+                    if not name.lower().endswith(".mkv"):
+                        continue
+
+                    # intenta parsear timestamp del filename
+                    m = ts_regex.search(name)
+                    if m:
+                        ymd, hms = m.groups()
+                        # asume timestamp en UTC en el nombre
+                        batch_time_naive = datetime.strptime(f"{ymd}_{hms}", "%Y%m%d_%H%M%S")
+                        batch_time_utc = batch_time_naive.replace(tzinfo=timezone.utc)
+                        batch_time_local = batch_time_utc.astimezone()
+
+                        if start_time <= batch_time_local <= end_time:
+                            items.append({
+                                "key": key,
+                                "time": batch_time_local,
+                                "size": obj["Size"],
+                                "utc_time": batch_time_utc,
+                                "kind": "mkv",
+                            })
+                    else:
+                        # no se pudo parsear: incluirlo sin hora (opcional)
+                        items.append({
+                            "key": key,
+                            "time": None,
+                            "size": obj["Size"],
+                            "utc_time": None,
+                            "kind": "mkv",
+                        })
+
+                if resp.get("IsTruncated"):
+                    continuation = resp.get("NextContinuationToken")
+                else:
+                    break
+
+            current_time += timedelta(hours=1)
+
+        items.sort(key=lambda x: x["time"] or datetime.min.replace(tzinfo=timezone.utc))
+        return items
+
+def _ensure_local_aware(dt: datetime) -> datetime:
+    """Devuelve dt con tz local; si viene naive, asume hora local."""
+    local_tz = datetime.now().astimezone().tzinfo
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=local_tz)
+    return dt.astimezone(local_tz)
 
 # Inicializar reconstructor
 S3_ENDPOINT = "http://minio:9000"
@@ -574,6 +486,8 @@ def reconstruct_video():
         camera_id = data['camera_id']
         start_time = datetime.fromisoformat(data['start_time'])
         end_time = datetime.fromisoformat(data['end_time'])
+        start_time = _ensure_local_aware(start_time)
+        end_time   = _ensure_local_aware(end_time)
         output_format = data.get('format', 'mp4')
         
         video_path, error = video_reconstructor.reconstruct_video(
@@ -593,11 +507,11 @@ def reconstruct_video():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-    
-@video_bp.route('/videos/batches/<camera_id>')
+@video_bp.route('/video/batches/<camera_id>')
 def list_available_batches(camera_id):
     """Listar videos disponibles para una cámara con filtros de fecha y paginación"""
     try:
+        kind = request.args.get('kind', 'tar').lower()
         # Obtener parámetros de la query string
         start_date_str = request.args.get('start_date')
         end_date_str = request.args.get('end_date')
@@ -612,13 +526,19 @@ def list_available_batches(camera_id):
         
         # Si no se proporcionan fechas, usar últimos 7 días por defecto
         if not start_date_str or not end_date_str:
-            end_time = datetime.now()
+            #end_time = datetime.now()
+            #start_time = end_time - timedelta(days=7)
+            end_time = datetime.now().astimezone()
             start_time = end_time - timedelta(days=7)
+            start_time = _ensure_local_aware(start_time)
+            end_time = _ensure_local_aware(end_time)
         else:
             # Parsear las fechas proporcionadas
             try:
                 start_time = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
                 end_time = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+                start_time = _ensure_local_aware(start_time)
+                end_time   = _ensure_local_aware(end_time)
             except ValueError:
                 return jsonify({"error": "Formato de fecha inválido. Use formato ISO (YYYY-MM-DDTHH:MM:SS)"}), 400
         
@@ -632,8 +552,11 @@ def list_available_batches(camera_id):
             return jsonify({"error": f"El rango de búsqueda no puede exceder {max_days} días"}), 400
         
         # Obtener todos los batches en el rango
-        all_batches = video_reconstructor._find_batches_in_range(camera_id, start_time, end_time)
-        
+        if kind == 'mkv':
+            all_batches = video_reconstructor._list_mkv_in_range(camera_id, start_time, end_time)
+        else:
+            all_batches = video_reconstructor._find_batches_in_range(camera_id, start_time, end_time)
+
         # Aplicar paginación
         total = len(all_batches)
         start_idx = (page - 1) * per_page
@@ -642,10 +565,12 @@ def list_available_batches(camera_id):
         
         return jsonify({
             "camera_id": camera_id,
+            "kind": kind,
             "available_batches": [{
-                "time": batch['time'].isoformat(),
+                "time": (batch['time'].isoformat() if batch.get('time') else None),
                 "size_mb": round(batch['size'] / (1024 * 1024), 2),
-                "key": batch['key']
+                "key": batch['key'],
+                "type": batch.get('kind', 'tar')
             } for batch in paginated_batches],
             "time_range": {
                 "start": start_time.isoformat(),
@@ -662,19 +587,20 @@ def list_available_batches(camera_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 400
     
-
-# video_reconstructor.py (parte adicional)
 @video_bp.route('/video/list/<camera_id>')
 def list_virtual_videos(camera_id):
-    """Listar videos virtuales basados en batches disponibles"""
+    """Listar videos virtuales basados en batches disponibles (tar) o MKV reales (source=mkv)"""
     try:
+        # NUEVO: selector de fuente ('tar' por defecto para no romper nada)
+        source = request.args.get('source', 'tar').lower()
+
         # Obtener parámetros de la query string
         start_date_str = request.args.get('start_date')
         end_date_str = request.args.get('end_date')
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 10, type=int)
         video_duration_min = request.args.get('duration_min', 5, type=int)
-        
+
         # Validar parámetros
         if page < 1:
             return jsonify({"error": "El número de página debe ser al menos 1"}), 400
@@ -682,40 +608,81 @@ def list_virtual_videos(camera_id):
             return jsonify({"error": "El tamaño de página debe estar entre 1 y 100"}), 400
         if video_duration_min < 1 or video_duration_min > 60:
             return jsonify({"error": "La duración debe estar entre 1 y 60 minutos"}), 400
-        
+
         # Parsear fechas
         if not start_date_str or not end_date_str:
-            end_time = datetime.now()
+            # defaults aware
+            end_time = datetime.now().astimezone()
             start_time = end_time - timedelta(days=7)
         else:
             try:
                 start_time = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
-                end_time = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+                end_time   = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
             except ValueError:
                 return jsonify({"error": "Formato de fecha inválido. Use formato ISO"}), 400
-        
+
+        # Normalizar siempre a aware local
+        start_time = _ensure_local_aware(start_time)
+        end_time   = _ensure_local_aware(end_time)
+
         # Validaciones de fecha
         if start_time > end_time:
             return jsonify({"error": "La fecha de inicio no puede ser mayor que la fecha de fin"}), 400
-        
+
         max_days = 7
         if (end_time - start_time).days > max_days:
             return jsonify({"error": f"El rango de búsqueda no puede exceder {max_days} días"}), 400
-        
-        # Obtener batches disponibles en el rango usando tu método existente
-        batches = video_reconstructor._find_batches_in_range(camera_id, start_time, end_time)
-        logger.info(f"Se encontraron {len(batches)} batches para la cámara {camera_id} en el rango especificado")
-        # Agrupar batches en segmentos de video virtuales
-        virtual_videos = create_virtual_videos_from_batches(batches, video_duration_min * 60)
-        logger.info(f"Se encontraron {len(virtual_videos)} videos virtuales para la cámara {camera_id}")
-        # Aplicar paginación
-        total = len(virtual_videos)
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_videos = virtual_videos[start_idx:end_idx]
-        
+
+        # ----------------------------
+        # Rama MKV vs TAR (virtual)
+        # ----------------------------
+        if source == 'mkv':
+            mkv_items = video_reconstructor._list_mkv_in_range(camera_id, start_time, end_time)
+            logger.info(f"Se encontraron {len(mkv_items)} MKV para la cámara {camera_id} en el rango especificado")
+
+            # Paginación
+            total = len(mkv_items)
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            page_items = mkv_items[start_idx:end_idx]
+
+            # Duración por defecto por MKV (ajusta si tus MKV duran distinto)
+            DEFAULT_MKV_SECONDS = 5 * 60
+            paginated_videos = []
+            for item in page_items:
+                st = item.get('time')  # puede ser None si no se pudo parsear
+                et_iso = None
+                if st:
+                    et_iso = (st + timedelta(seconds=DEFAULT_MKV_SECONDS)).isoformat()
+
+                paginated_videos.append({
+                    "id": f"mkv_{os.path.basename(item['key']).rsplit('.', 1)[0]}",
+                    "start_time": (st.isoformat() if st else None),
+                    "end_time": et_iso,
+                    "duration_seconds": DEFAULT_MKV_SECONDS,
+                    "size_mb": round(item['size'] / (1024 * 1024), 2),
+                    "batch_count": 1,
+                    "batches": [item['key']],   # consistente con “virtual”
+                    "type": "mkv"
+                })
+
+        else:
+            # Comportamiento actual: tar.gz → agrupar en “virtual videos”
+            batches = video_reconstructor._find_batches_in_range(camera_id, start_time, end_time)
+            logger.info(f"Se encontraron {len(batches)} batches para la cámara {camera_id} en el rango especificado")
+
+            virtual_videos = create_virtual_videos_from_batches(batches, video_duration_min * 60)
+            logger.info(f"Se encontraron {len(virtual_videos)} videos virtuales para la cámara {camera_id}")
+
+            total = len(virtual_videos)
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            paginated_videos = virtual_videos[start_idx:end_idx]
+
+        # Respuesta
         return jsonify({
             "camera_id": camera_id,
+            "source": source,  # 'mkv' o 'tar'
             "videos": paginated_videos,
             "time_range": {
                 "start": start_time.isoformat(),
@@ -728,11 +695,10 @@ def list_virtual_videos(camera_id):
                 "pages": (total + per_page - 1) // per_page
             }
         })
-        
-    except Exception as e:
-        logger.error(f"Error en list_virtual_videos: {str(e)}")
-        return jsonify({"error": str(e)}), 400
 
+    except Exception as e:
+        logger.error(f"Error en list_virtual_videos: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 400
 
 def create_virtual_videos_from_batches(batches, target_duration_seconds):
     """Agrupar batches en segmentos de video virtuales usando tu estructura de batches"""
@@ -782,13 +748,11 @@ def create_virtual_videos_from_batches(batches, target_duration_seconds):
     
     return virtual_videos
 
-
 def estimate_batch_duration(batch):
     """Estimar la duración de un batch basado en su tamaño"""
     # Asumir 1 MB ≈ 10 segundos de video (ajusta según tu codec)
     size_mb = batch['size'] / (1024 * 1024)
     return min(max(size_mb * 10, 5), 300)  # Entre 5 y 300 segundos
-
 
 def create_virtual_video_entry(start_time, batches, duration_seconds):
     """Crear entrada de video virtual"""
@@ -812,148 +776,285 @@ def create_virtual_video_entry(start_time, batches, duration_seconds):
         "type": "virtual"
     }
 
-
-# Endpoint para generar thumbnail bajo demanda
+# --- Thumbnail: endpoint con soporte MKV | TAR, y source=auto/tar/mkv ---
 @video_bp.route('/video/thumbnail/<camera_id>')
 def generate_thumbnail_on_demand(camera_id):
-    """Generar thumbnail bajo demanda desde el primer frame de un batch"""
+    """
+    Generar thumbnail bajo demanda.
+    Soporta batches .tar.gz (frames) y MKV bajo batches/.
+    Query params:
+      - time=ISO8601
+      - source=auto|tar|mkv  (auto por defecto)
+    """
     try:
         time_str = request.args.get('time')
         if not time_str:
             return jsonify({"error": "Parámetro 'time' requerido"}), 400
-        
+
+        source = (request.args.get('source') or 'auto').lower()
+        if source not in ('auto', 'tar', 'mkv'):
+            return jsonify({"error": "Parámetro 'source' inválido (auto|tar|mkv)"}), 400
+
         target_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-        
-        # Buscar batch más cercano al tiempo solicitado
-        batch = find_closest_batch(camera_id, target_time)
-        if not batch:
+        target_time = _ensure_local_aware(target_time)
+
+        # Buscar batch/segmento más cercano
+        closest = find_closest_batch(camera_id, target_time, source=source)
+        if not closest:
             return jsonify({"error": "No se encontraron batches para el tiempo solicitado"}), 404
-        
-        # Generar thumbnail desde el batch
-        thumbnail_path = extract_thumbnail_from_batch(batch['key'])
-        
+
+        # Generar thumbnail desde el objeto encontrado (key puede ser tar.gz o mkv)
+        thumbnail_path = extract_thumbnail_from_key(closest['key'])
         if not thumbnail_path:
             return jsonify({"error": "No se pudo generar el thumbnail"}), 500
-        
+
         return send_file(
             thumbnail_path,
             mimetype='image/jpeg',
             as_attachment=False,
             download_name=f"thumbnail_{camera_id}_{target_time.strftime('%Y%m%d_%H%M%S')}.jpg"
         )
-        
+
     except Exception as e:
-        logger.error(f"Error generando thumbnail: {str(e)}")
+        logger.error(f"Error generando thumbnail: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 400
 
-
-def find_closest_batch(camera_id, target_time):
-    """Encontrar el batch más cercano al tiempo especificado usando tu método existente"""
-    # Buscar batches en un rango de ±2 minutos
-    start_range = target_time - timedelta(minutes=2)
-    end_range = target_time + timedelta(minutes=2)
-    
-    batches = video_reconstructor._find_batches_in_range(camera_id, start_range, end_range)
-    if not batches:
-        return None
-    
-    # Encontrar el batch más cercano al tiempo objetivo
-    closest_batch = min(batches, key=lambda x: abs(x['time'] - target_time))
-    return closest_batch
-
-
-def extract_thumbnail_from_batch(batch_key):
-    """Extraer thumbnail desde un batch comprimido"""
+def find_closest_batch(camera_id, target_time, source='auto'):
+    """
+    Encontrar el batch/segmento más cercano a target_time.
+    - source='tar': busca solo .tar.gz (frames)
+    - source='mkv': busca solo .mkv (grabaciones 5min)
+    - source='auto': combina ambos y elige el más cercano
+    Usa ventana ±2 minutos.
+    """
     try:
-        # Descargar batch
-        response = s3_client.get_object(
-            Bucket=S3_BUCKET_NAME,
-            Key=batch_key
-        )
-        
-        # Extraer tar.gz
-        tar_bytes = BytesIO(response['Body'].read())
-        
+        target_time = _ensure_local_aware(target_time)
+        start_range = target_time - timedelta(minutes=2)
+        end_range   = target_time + timedelta(minutes=2)
+
+        candidates = []
+
+        if source in ('auto', 'tar'):
+            tar_batches = video_reconstructor._find_batches_in_range(camera_id, start_range, end_range) or []
+            # Normaliza estructura
+            for b in tar_batches:
+                if b.get('time'):
+                    candidates.append({
+                        'key': b['key'],
+                        'time': _ensure_local_aware(b['time']),
+                        'size': b.get('size', 0),
+                        'type': 'tar'
+                    })
+
+        if source in ('auto', 'mkv'):
+            mkv_items = video_reconstructor._list_mkv_in_range(camera_id, start_range, end_range) or []
+            for m in mkv_items:
+                if m.get('time'):
+                    candidates.append({
+                        'key': m['key'],
+                        'time': _ensure_local_aware(m['time']),
+                        'size': m.get('size', 0),
+                        'type': 'mkv'
+                    })
+
+        if not candidates:
+            return None
+
+        closest = min(candidates, key=lambda x: abs(x['time'] - target_time))
+        return closest
+
+    except Exception as e:
+        logger.error(f"Error en find_closest_batch: {e}", exc_info=True)
+        return None
+
+def extract_thumbnail_from_key(obj_key):
+    """
+    Extrae un thumbnail (JPEG) a partir de un objeto en S3:
+      - Si es .tar.gz (frames): abre el tar y usa el primer frame_*.jpg/png
+      - Si es .mkv: descarga temporalmente y usa ffmpeg para snapshot
+    Devuelve ruta al archivo JPEG temporal o None.
+    """
+    try:
+        fname = obj_key.split('/')[-1].lower()
+        if fname.endswith('.tar.gz'):
+            return _extract_thumb_from_tar(obj_key)
+        elif fname.endswith('.mkv'):
+            return _extract_thumb_from_mkv(obj_key)
+        else:
+            logger.warning(f"Formato no soportado para thumbnail: {obj_key}")
+            return None
+    except Exception as e:
+        logger.error(f"Error extrayendo thumbnail para {obj_key}: {e}", exc_info=True)
+        return None
+
+def _extract_thumb_from_tar(batch_key):
+    """Thumbnail desde .tar.gz (primer frame_)"""
+    try:
+        resp = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=batch_key)
+        tar_bytes = BytesIO(resp['Body'].read())
+
         with tarfile.open(fileobj=tar_bytes, mode='r:gz') as tar:
-            # Buscar el primer frame
-            frame_files = [m for m in tar.getmembers() if m.name.startswith('frame_')]
-            if not frame_files:
+            frame_members = [m for m in tar.getmembers() if m.name.startswith('frame_')]
+            if not frame_members:
                 return None
-                
-            frame_files.sort(key=lambda x: x.name)
-            first_frame = frame_files[0]
-            
-            # Extraer el primer frame
-            frame_data = tar.extractfile(first_frame).read()
-            frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_COLOR)
-            
+            frame_members.sort(key=lambda x: x.name)
+            first = frame_members[0]
+
+            data = tar.extractfile(first).read()
+            frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
             if frame is None:
                 return None
-            
-            # Crear archivo temporal para el thumbnail
-            temp_thumb_path = os.path.join(tempfile.gettempdir(), f"thumb_{os.path.basename(batch_key)}.jpg")
-            
-            # Redimensionar si es muy grande (max 320x180)
-            height, width = frame.shape[:2]
-            if width > 320 or height > 180:
-                scale = min(320/width, 180/height)
-                new_width = int(width * scale)
-                new_height = int(height * scale)
-                frame = cv2.resize(frame, (new_width, new_height))
-            
-            # Guardar como JPEG
-            cv2.imwrite(temp_thumb_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            
-            return temp_thumb_path
-            
+
+            # resize suave (máx 320x180)
+            h, w = frame.shape[:2]
+            if w > 320 or h > 180:
+                scale = min(320 / w, 180 / h)
+                frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
+            out_path = os.path.join(tempfile.gettempdir(), f"thumb_{os.path.basename(batch_key)}.jpg")
+            cv2.imwrite(out_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            return out_path
+
     except Exception as e:
-        logger.error(f"Error extrayendo thumbnail: {str(e)}")
+        logger.error(f"Error extrayendo thumbnail TAR {batch_key}: {e}", exc_info=True)
         return None
 
-# Agrega este endpoint a tu API Flask
+def _extract_thumb_from_mkv(mkv_key):
+    """Thumbnail desde .mkv usando ffmpeg (toma un frame al ~1s)."""
+    try:
+        # Descarga temporal del MKV
+        tmp_dir = tempfile.gettempdir()
+        base = os.path.basename(mkv_key)
+        mkv_path = os.path.join(tmp_dir, f"tmp_{base}")
+        jpg_path = os.path.join(tmp_dir, f"thumb_{os.path.splitext(base)[0]}.jpg")
+
+        # Si ya existe de antes, intenta reutilizar (opc.)
+        if not os.path.exists(mkv_path):
+            with open(mkv_path, 'wb') as f:
+                obj = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=mkv_key)
+                for chunk in obj['Body'].iter_chunks(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+
+        # Ejecuta ffmpeg para snapshot
+        # -ss 1: ir a 1s (evita primer frame vacío)
+        import subprocess
+        cmd = [
+            'ffmpeg', '-y',
+            '-ss', '1',
+            '-i', mkv_path,
+            '-frames:v', '1',
+            '-q:v', '3',
+            jpg_path
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if res.returncode != 0:
+            logger.error(f"ffmpeg thumbnail mkv error: {res.stderr}")
+            return None
+
+        return jpg_path
+
+    except Exception as e:
+        logger.error(f"Error extrayendo thumbnail MKV {mkv_key}: {e}", exc_info=True)
+        return None
+    
+# --- Descarga de video: soporta tar (reconstrucción) y mkv (descarga directa) ---
 @video_bp.route('/video/download/<camera_id>', methods=['GET'])
 def download_video(camera_id):
-    """Descargar video para un rango de tiempo específico"""
+    """
+    Descargar video para un rango de tiempo.
+    Query:
+      - start_time, end_time (ISO)
+      - format=mp4 (solo para 'tar')
+      - source=tar|mkv  (default: tar)
+    Comportamiento:
+      - source=tar: usa reconstrucción por frames (como antes).
+      - source=mkv: busca MKV en el rango; si hay 1, lo descarga tal cual.
+                    si hay 0 → 404, si hay >1 → 400 (pide acotar rango).
+    """
     try:
-        # Obtener parámetros de la query string
+        source = (request.args.get('source') or 'tar').lower()
+        if source not in ('tar', 'mkv'):
+            return jsonify({"error": "Parámetro 'source' inválido (tar|mkv)"}), 400
+
         start_time_str = request.args.get('start_time')
-        end_time_str = request.args.get('end_time')
-        output_format = request.args.get('format', 'mp4')
-        
+        end_time_str   = request.args.get('end_time')
+        output_format  = request.args.get('format', 'mp4')
+
         if not start_time_str or not end_time_str:
             return jsonify({"error": "Se requieren start_time y end_time"}), 400
-        
-        # Parsear fechas
+
+        # Parseo + normalización
         start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
-        end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
-        
-        # Validar que el rango sea razonable (max 1 hora)
+        end_time   = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+        start_time = _ensure_local_aware(start_time)
+        end_time   = _ensure_local_aware(end_time)
+
+        # Validación de rango
+        if start_time > end_time:
+            return jsonify({"error": "start_time no puede ser mayor que end_time"}), 400
+
+        # Limite: 1 hora para tar (por performance). Para MKV, dejamos igual (pero resolvemos 1 archivo).
         max_duration = timedelta(hours=1)
-        if (end_time - start_time) > max_duration:
-            return jsonify({
-                "error": f"El rango no puede exceder {max_duration.total_seconds() / 60} minutos"
-            }), 400
-        
-        # Reconstruir el video
-        video_path, error = video_reconstructor.reconstruct_video(
-            camera_id, start_time, end_time, output_format
-        )
-        
-        if error:
-            return jsonify({"error": error}), 404        
-        # Enviar el archivo para descarga
-        return send_file(
-            video_path,
-            as_attachment=True,
-            download_name=f"{camera_id}_{start_time.strftime('%Y%m%d_%H%M')}_{end_time.strftime('%H%M')}.{output_format}",
-            mimetype=f"video/{output_format}"
-        )
-        
+        if source == 'tar' and (end_time - start_time) > max_duration:
+            return jsonify({"error": f"El rango no puede exceder {int(max_duration.total_seconds()/60)} minutos en source=tar"}), 400
+
+        if source == 'mkv':
+            # Busca MKV en el rango
+            mkvs = video_reconstructor._list_mkv_in_range(camera_id, start_time, end_time) or []
+            if len(mkvs) == 0:
+                return jsonify({"error": "No se encontraron MKV en el rango solicitado"}), 404
+            if len(mkvs) > 1:
+                return jsonify({"error": "Se encontraron múltiples MKV en el rango; acota más el intervalo o descarga por key desde /video/list?source=mkv"}), 400
+
+            # Único MKV → descargar tal cual
+            mkv_key = mkvs[0]['key']
+            tmp_path = _download_s3_object_to_temp(mkv_key)
+            if not tmp_path:
+                return jsonify({"error": "No se pudo descargar el MKV"}), 500
+
+            return send_file(
+                tmp_path,
+                as_attachment=True,
+                download_name=os.path.basename(mkv_key),
+                mimetype='video/x-matroska'
+            )
+
+        else:
+            # source = tar → reconstrucción tradicional por frames
+            video_path, error = video_reconstructor.reconstruct_video(camera_id, start_time, end_time, output_format)
+            if error:
+                return jsonify({"error": error}), 404
+
+            return send_file(
+                video_path,
+                as_attachment=True,
+                download_name=f"{camera_id}_{start_time.strftime('%Y%m%d_%H%M')}_{end_time.strftime('%H%M')}.{output_format}",
+                mimetype=f"video/{output_format}"
+            )
+
     except Exception as e:
-        logger.error(f"Error descargando video: {str(e)}")
+        logger.error(f"Error descargando video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
-    
-@video_bp.route('/video/download', methods=['POST'])  # Cambiado a POST
+
+def _download_s3_object_to_temp(key: str) -> str | None:
+    """Descarga un objeto S3 a /tmp y retorna su ruta, o None si falla."""
+    try:
+        base = os.path.basename(key)
+        out = os.path.join(tempfile.gettempdir(), f"dl_{base}")
+        if os.path.exists(out) and os.path.getsize(out) > 0:
+            return out
+        with open(out, 'wb') as f:
+            obj = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=key)
+            for chunk in obj['Body'].iter_chunks(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+        return out
+    except Exception as e:
+        logger.error(f"Error descargando objeto S3 {key}: {e}", exc_info=True)
+        return None
+      
+@video_bp.route('/video/download', methods=['POST'])
 def download_clip():
     """Descargar clip enviando key"""
     try:
