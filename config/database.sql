@@ -29,6 +29,14 @@ CREATE TABLE alertas (
     estado SMALLINT NOT NULL DEFAULT 0 -- Estado de alerta, 0: "En Observación", 1: "Confirmada", 2: "Falso Positivo"
 );
 
+CREATE TABLE usuarios (
+    id SERIAL PRIMARY KEY,
+    usuario VARCHAR(50) UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    nombre VARCHAR(100) NOT NULL,
+    rol SMALLINT NOT NULL DEFAULT 0 -- 0: 'invitado', 1: 'funcionario', 2: 'administrador'
+)
+
 CREATE TABLE tipos_alerta (
     id SERIAL PRIMARY KEY, -- 0: "No especificado", 1: "Merodeo", 2: "Portonazo"...*se puede ir agregando mas si es necesario*
     nombre_tipo VARCHAR(100) ,

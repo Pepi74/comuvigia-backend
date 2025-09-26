@@ -7,7 +7,7 @@ import indexRoutes from './routes/index.js'
 import camarasRoutes from './routes/camaras.js'
 import alertasRoutes from './routes/alertas.js'
 import tranmisionRoutes from './routes/transmision.js'
-
+import authRoutes from './routes/auth.js'
 
 dotenv.config()
 
@@ -32,6 +32,7 @@ app.use('/', indexRoutes)
 app.use('/api/camaras', camarasRoutes)
 app.use('/api/alertas', alertasRoutes)
 app.use('/api/transmision', tranmisionRoutes)
+app.use('/api/auth', authRoutes)
 
 // WebSocket: manejar conexiones entrantes
 io.on('connection', (socket) => {
