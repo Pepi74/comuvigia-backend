@@ -13,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, send_file, jsonify, request
 from botocore.client import Config
 from functools import lru_cache
-
 # Logs
 os.makedirs("/logs", exist_ok=True)
 from logging.handlers import RotatingFileHandler
@@ -32,10 +31,12 @@ ch = logging.StreamHandler()
 ch.setFormatter(fmt)
 logger.addHandler(ch)
 
+_MKV_TS_RE = re.compile(r'(\d{8})_(\d{6})') # p.ej. 20250921_015047
 MAX_FPS = 30
 DEFAULT_FPS = 12
 BATCHES_PREFIX = "batches"
 CLIPS_PREFIX = "clips"
+DEFAULT_MKV_SECONDS = 5 * 60
 video_bp = Blueprint('video', __name__)
 
 class VideoReconstructor:
@@ -453,6 +454,86 @@ class VideoReconstructor:
         items.sort(key=lambda x: x["time"] or datetime.min.replace(tzinfo=timezone.utc))
         return items
 
+    def _list_mkv_by_day_range(self, camera_id, start_time, end_time):
+        """
+        Lista TODOS los .mkv bajo batches/<camera_id>/<YYYY>/<MM>/<DD>/***
+        que caen dentro del rango [start_time, end_time].
+        - Recorre por día (incluye subcarpetas).
+        - Intenta filtrar por timestamp del filename (UTC->local).
+          Si no puede parsear el timestamp, igual los incluye (time=None).
+        Devuelve: [{'key','time','size','kind': 'mkv'}...], ordenados por 'time'.
+        """
+        start_time = _ensure_local_aware(start_time)
+        end_time   = _ensure_local_aware(end_time)
+
+        items = []
+
+        # Recorre días (inclusive)
+        day_cursor = start_time.date()
+        end_day    = end_time.date()
+
+        while day_cursor <= end_day:
+            day_prefix = f"{BATCHES_PREFIX}/{camera_id}/{day_cursor.strftime('%Y/%m/%d')}/"
+            continuation = None
+
+            while True:
+                kwargs = {"Bucket": S3_BUCKET_NAME, "Prefix": day_prefix}
+                if continuation:
+                    kwargs["ContinuationToken"] = continuation
+
+                try:
+                    resp = self.s3_client.list_objects_v2(**kwargs)
+                except Exception as e:
+                    logger.error(f"Error listando MKV en {day_prefix}: {e}")
+                    break
+
+                for obj in resp.get("Contents", []):
+                    key = obj["Key"]
+                    name = key.split("/")[-1].lower()
+                    if not name.endswith(".mkv"):
+                        continue
+
+                    # Intenta parsear timestamp del filename
+                    parsed_time_local = None
+                    m = _MKV_TS_RE.search(name)
+                    if m:
+                        ymd, hms = m.groups()
+                        try:
+                            naive = datetime.strptime(f"{ymd}_{hms}", "%Y%m%d_%H%M%S")
+                            # Interpretamos timestamp como UTC en el nombre
+                            t_utc = naive.replace(tzinfo=timezone.utc)
+                            parsed_time_local = t_utc.astimezone()
+                        except Exception:
+                            parsed_time_local = None
+
+                    # Si tenemos hora parseada, filtra por rango exacto
+                    if parsed_time_local:
+                        if not (start_time <= parsed_time_local <= end_time):
+                            continue  # fuera del rango exacto
+
+                    # Si no logramos parsear, igual lo incluimos (porque está bajo el día del rango)
+                    items.append({
+                        "key": key,
+                        "time": parsed_time_local,   # puede ser None
+                        "size": obj.get("Size", 0),
+                        "kind": "mkv",
+                    })
+
+                if resp.get("IsTruncated"):
+                    continuation = resp.get("NextContinuationToken")
+                else:
+                    break
+
+            # siguiente día
+            day_cursor = day_cursor + timedelta(days=1)
+
+        # Ordenar: primero por time (None al final), luego por key
+        def _sort_key(x):
+            return (x["time"] is None, x["time"] or datetime.min.replace(tzinfo=timezone.utc), x["key"])
+
+        items.sort(key=_sort_key)
+        return items
+
 def _ensure_local_aware(dt: datetime) -> datetime:
     """Devuelve dt con tz local; si viene naive, asume hora local."""
     local_tz = datetime.now().astimezone().tzinfo
@@ -646,25 +727,21 @@ def list_virtual_videos(camera_id):
             end_idx = start_idx + per_page
             page_items = mkv_items[start_idx:end_idx]
 
-            # Duración por defecto por MKV (ajusta si tus MKV duran distinto)
-            DEFAULT_MKV_SECONDS = 5 * 60
-            paginated_videos = []
-            for item in page_items:
-                st = item.get('time')  # puede ser None si no se pudo parsear
-                et_iso = None
-                if st:
-                    et_iso = (st + timedelta(seconds=DEFAULT_MKV_SECONDS)).isoformat()
-
-                paginated_videos.append({
-                    "id": f"mkv_{os.path.basename(item['key']).rsplit('.', 1)[0]}",
-                    "start_time": (st.isoformat() if st else None),
-                    "end_time": et_iso,
-                    "duration_seconds": DEFAULT_MKV_SECONDS,
-                    "size_mb": round(item['size'] / (1024 * 1024), 2),
-                    "batch_count": 1,
-                    "batches": [item['key']],   # consistente con “virtual”
-                    "type": "mkv"
-                })
+            return jsonify({
+                "camera_id": camera_id,
+                "source": source,  # 'mkv' o 'tar'
+                "videos": page_items,
+                "time_range": {
+                    "start": start_time.isoformat(),
+                    "end": end_time.isoformat()
+                },
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total": total,
+                    "pages": (total + per_page - 1) // per_page
+                }
+            })
 
         else:
             # Comportamiento actual: tar.gz → agrupar en “virtual videos”
@@ -780,44 +857,138 @@ def create_virtual_video_entry(start_time, batches, duration_seconds):
 @video_bp.route('/video/thumbnail/<camera_id>')
 def generate_thumbnail_on_demand(camera_id):
     """
-    Generar thumbnail bajo demanda.
-    Soporta batches .tar.gz (frames) y MKV bajo batches/.
-    Query params:
-      - time=ISO8601
-      - source=auto|tar|mkv  (auto por defecto)
+    Generar thumbnail.
+    Params:
+      - source=tar|mkv  (default: tar)
+      - key=...         (solo mkv; si viene, se usa directo)
+      - time=ISO8601    (obligatorio en tar; opcional en mkv si no hay key)
     """
     try:
+        source = (request.args.get('source') or 'tar').lower()
+        key = request.args.get('key')
         time_str = request.args.get('time')
-        if not time_str:
-            return jsonify({"error": "Parámetro 'time' requerido"}), 400
 
-        source = (request.args.get('source') or 'auto').lower()
-        if source not in ('auto', 'tar', 'mkv'):
-            return jsonify({"error": "Parámetro 'source' inválido (auto|tar|mkv)"}), 400
+        if source not in ('tar', 'mkv'):
+            return jsonify({"error": "source inválido (tar|mkv)"}), 400
 
-        target_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-        target_time = _ensure_local_aware(target_time)
+        # ---- MKV: thumbnail desde el archivo MKV ----
+        if source == 'mkv':
+            if key:
+                thumb = extract_thumbnail_from_key(key)  # maneja mkv
+                if not thumb:
+                    return jsonify({"error": "No se pudo generar thumbnail desde el MKV"}), 500
+                return send_file(thumb, mimetype='image/jpeg', as_attachment=False,
+                                 download_name=f"thumb_{os.path.basename(key)}.jpg")
 
-        # Buscar batch/segmento más cercano
-        closest = find_closest_batch(camera_id, target_time, source=source)
-        if not closest:
-            return jsonify({"error": "No se encontraron batches para el tiempo solicitado"}), 404
+            # Si no hay key, necesitas 'time' para ubicar el MKV que cubre ese instante
+            if not time_str:
+                return jsonify({"error": "Para source=mkv debes pasar ?key=... o ?time=..."}), 400
 
-        # Generar thumbnail desde el objeto encontrado (key puede ser tar.gz o mkv)
-        thumbnail_path = extract_thumbnail_from_key(closest['key'])
-        if not thumbnail_path:
-            return jsonify({"error": "No se pudo generar el thumbnail"}), 500
+            target_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+            target_time = _ensure_local_aware(target_time)
 
-        return send_file(
-            thumbnail_path,
-            mimetype='image/jpeg',
-            as_attachment=False,
-            download_name=f"thumbnail_{camera_id}_{target_time.strftime('%Y%m%d_%H%M%S')}.jpg"
-        )
+            match = _find_mkv_covering_time(camera_id, target_time, chunk_seconds=DEFAULT_MKV_SECONDS)
+            if not match:
+                return jsonify({"error": "No se encontró un MKV que cubra ese tiempo"}), 404
+
+            thumb = extract_thumbnail_from_key(match['key'])
+            if not thumb:
+                return jsonify({"error": "No se pudo generar thumbnail desde el MKV"}), 500
+
+            return send_file(thumb, mimetype='image/jpeg', as_attachment=False,
+                             download_name=f"thumb_{os.path.basename(match['key'])}.jpg")
+
+        # ---- TAR: thumbnail desde el primer frame del batch más cercano ----
+        else:
+            if not time_str:
+                return jsonify({"error": "Parámetro 'time' requerido para source=tar"}), 400
+
+            target_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+            target_time = _ensure_local_aware(target_time)
+
+            # Buscar batch .tar.gz más cercano ±2 min
+            batch = find_closest_batch(camera_id, target_time, source='tar')
+            if not batch:
+                return jsonify({"error": "No se encontraron batches para el tiempo solicitado"}), 404
+
+            # Generar thumbnail desde el TAR
+            thumbnail_path = extract_thumbnail_from_key(batch['key'])  # ahora maneja tar y mkv
+            if not thumbnail_path:
+                return jsonify({"error": "No se pudo generar el thumbnail"}), 500
+
+            return send_file(
+                thumbnail_path,
+                mimetype='image/jpeg',
+                as_attachment=False,
+                download_name=f"thumbnail_{camera_id}_{target_time.strftime('%Y%m%d_%H%M%S')}.jpg"
+            )
 
     except Exception as e:
         logger.error(f"Error generando thumbnail: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 400
+
+def _find_mkv_covering_time(camera_id: str, target_time: datetime, chunk_seconds: int = DEFAULT_MKV_SECONDS):
+    """
+    Devuelve el MKV cuyo intervalo [start, start+chunk) cubre target_time.
+    Busca en la hora anterior, actual y siguiente para cubrir bordes.
+    """
+    target_time = _ensure_local_aware(target_time)
+
+    def _hour_prefix(dt: datetime) -> str:
+        # Si tus carpetas son UTC, usa dt.astimezone(timezone.utc). Si son locales, usa dt directo.
+        dt_utc = dt.astimezone(timezone.utc)
+        return f"{BATCHES_PREFIX}/{camera_id}/{dt_utc.strftime('%Y/%m/%d/%H')}/"
+
+    hours = [target_time - timedelta(hours=1), target_time, target_time + timedelta(hours=1)]
+    candidates = []
+    for h in hours:
+        prefix = _hour_prefix(h)
+        continuation = None
+        while True:
+            kwargs = {"Bucket": S3_BUCKET_NAME, "Prefix": prefix}
+            if continuation:
+                kwargs["ContinuationToken"] = continuation
+            try:
+                resp = s3_client.list_objects_v2(**kwargs)
+            except Exception as e:
+                logger.error(f"Error listando MKV en {prefix}: {e}")
+                break
+
+            for obj in resp.get("Contents", []):
+                key = obj["Key"]
+                name = key.split("/")[-1].lower()
+                if not name.endswith(".mkv"):
+                    continue
+                m = _MKV_TS_RE.search(name)
+                if not m:
+                    continue
+                ymd, hms = m.groups()
+                try:
+                    start_naive = datetime.strptime(f"{ymd}_{hms}", "%Y%m%d_%H%M%S")
+                    start_utc = start_naive.replace(tzinfo=timezone.utc)
+                    start_local = start_utc.astimezone()
+                    end_local = start_local + timedelta(seconds=chunk_seconds)
+                    candidates.append({"key": key, "time": start_local, "end_time": end_local, "size": obj.get("Size", 0)})
+                except Exception:
+                    continue
+
+            if resp.get("IsTruncated"):
+                continuation = resp.get("NextContinuationToken")
+            else:
+                break
+
+    for c in sorted(candidates, key=lambda x: x["time"]):
+        if c["time"] <= target_time < c["end_time"]:
+            return {"key": c["key"], "time": c["time"], "size": c["size"]}
+
+    # Fallback: más cercano ±2 min
+    if candidates:
+        candidates.sort(key=lambda x: abs(x["time"] - target_time))
+        if abs(candidates[0]["time"] - target_time) <= timedelta(minutes=2):
+            best = candidates[0]
+            return {"key": best["key"], "time": best["time"], "size": best["size"]}
+
+    return None
 
 def find_closest_batch(camera_id, target_time, source='auto'):
     """
@@ -1000,25 +1171,23 @@ def download_video(camera_id):
             return jsonify({"error": f"El rango no puede exceder {int(max_duration.total_seconds()/60)} minutos en source=tar"}), 400
 
         if source == 'mkv':
-            # Busca MKV en el rango
-            mkvs = video_reconstructor._list_mkv_in_range(camera_id, start_time, end_time) or []
-            if len(mkvs) == 0:
-                return jsonify({"error": "No se encontraron MKV en el rango solicitado"}), 404
-            if len(mkvs) > 1:
-                return jsonify({"error": "Se encontraron múltiples MKV en el rango; acota más el intervalo o descarga por key desde /video/list?source=mkv"}), 400
+            explicit_key = request.args.get('key')
+            if not explicit_key:
+                return jsonify({
+                    "error": "Para source=mkv debes pasar ?key=... (Primero lista con /video/list/<camera_id>?source=mkv para obtener el key)"
+                }), 400
 
-            # Único MKV → descargar tal cual
-            mkv_key = mkvs[0]['key']
-            tmp_path = _download_s3_object_to_temp(mkv_key)
+            tmp_path = _download_s3_object_to_temp(explicit_key)
             if not tmp_path:
                 return jsonify({"error": "No se pudo descargar el MKV"}), 500
 
             return send_file(
                 tmp_path,
                 as_attachment=True,
-                download_name=os.path.basename(mkv_key),
+                download_name=os.path.basename(explicit_key),
                 mimetype='video/x-matroska'
             )
+
 
         else:
             # source = tar → reconstrucción tradicional por frames
