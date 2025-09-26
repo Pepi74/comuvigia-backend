@@ -30,13 +30,13 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ mensaje: 'Contraseña incorrecta' })
     }
 
-    const token = jwt.sign(
+    jwt.sign(
       { id: user.id, usuario: user.usuario, rol: user.rol },
       process.env.JWT_SECRET,
       { expiresIn: '2h' } // Modificar si es necesario
     )
 
-    res.json({ token, usuario: user.usuario, rol: user.rol, nombre: user.nombre })
+    res.json({ usuario: user.usuario, rol: user.rol, nombre: user.nombre })
   } catch (error) {
     console.error('Error al autenticar usuario:', error)
     res.status(500).send('Error del servidor')

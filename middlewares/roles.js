@@ -1,5 +1,5 @@
 // Midddleware de verificacion de rol de usuarios, recibe la lista rolesPermitidos, ejemplo: [0, 1]
-export function requireRole(rolesPermitidos) {
+export function verificarRol(rolesPermitidos) {
   return (req, res, next) => {
     const rolUsuario = req.user?.rol
     if (!rolUsuario || !rolesPermitidos.includes(rolUsuario)) {

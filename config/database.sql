@@ -32,7 +32,7 @@ CREATE TABLE alertas (
 CREATE TABLE usuarios (
     id SERIAL PRIMARY KEY,
     usuario VARCHAR(50) UNIQUE NOT NULL,
-    password TEXT NOT NULL,
+    contrasena TEXT NOT NULL,
     nombre VARCHAR(100) NOT NULL,
     rol SMALLINT NOT NULL DEFAULT 0 -- 0: 'invitado', 1: 'funcionario', 2: 'administrador'
 )
