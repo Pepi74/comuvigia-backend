@@ -10,7 +10,7 @@ dotenv.config()
 const router = Router()
 
 // Endpoint para registrar un usuario en BD con contraseña hasheada
-router.post('/register', async(req, res) => {
+router.post('/register', verificarToken, verificarRol([2]), async(req, res) => {
 
     const { usuario, contrasena, nombre } = req.body
 
@@ -32,7 +32,7 @@ router.post('/register', async(req, res) => {
 })
 
 // Endpoint para obtener un listado de todos los usuarios
-router.get('/usuarios', verificarToken, verificarRol([2]), async (_, res) => {
+router.get('/', verificarToken, verificarRol([2]), async (_, res) => {
   try {
     const result = await pool.query('SELECT * FROM usuarios')
     res.json(result.rows)
@@ -43,7 +43,7 @@ router.get('/usuarios', verificarToken, verificarRol([2]), async (_, res) => {
 })
 
 // Endpoint para obtener un usuario por id
-router.get('/usuarios/:id', verificarToken, verificarRol([1, 2]), async (req, res) => {
+router.get('/:id', verificarToken, verificarRol([1, 2]), async (req, res) => {
   const { id } = req.params
   try {
     const result = await pool.query('SELECT * FROM usuarios WHERE id = $1', [id])
@@ -58,10 +58,10 @@ router.get('/usuarios/:id', verificarToken, verificarRol([1, 2]), async (req, re
 })
 
 // Endpoint para obtener un usuario por campo usuario(ya que es unico)
-router.get('/usuarios', verificarToken, verificarRol([1, 2]), async (req, res) => {
+router.get('/usuario', verificarToken, verificarRol([1, 2]), async (req, res) => {
   const usuario = req.body.usuario
   try {
-    const result = await pool.query('SELECT * FROM usuarios WHERE id = $1', [usuario])
+    const result = await pool.query('SELECT * FROM usuarios WHERE usuario = $1', [usuario])
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Usuario no encontrado" })
     }
@@ -73,7 +73,7 @@ router.get('/usuarios', verificarToken, verificarRol([1, 2]), async (req, res) =
 })
 
 // Endpoint para modificar el rol de un usuario por id
-router.put('/usuarios/:id', verificarToken, verificarRol([2]), async (req, res) => {
+router.put('/:id', verificarToken, verificarRol([2]), async (req, res) => {
   const { id } = req.params
   const rol = req.body.rol
 
@@ -93,7 +93,7 @@ router.put('/usuarios/:id', verificarToken, verificarRol([2]), async (req, res) 
 })
 
 // Endpoint para eliminar usuario por id
-router.delete('/usuarios/:id', verificarToken, verificarRol([2]), async (req, res) => {
+router.delete('/:id', verificarToken, verificarRol([2]), async (req, res) => {
   const { id } = req.params
   try {
     const result = await pool.query('DELETE FROM usuarios WHERE id = $1 RETURNING id', [id])
