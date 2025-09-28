@@ -10,7 +10,7 @@ const router = Router()
 
 // Ruta de login, verifica si existe usuario en BD y asigna un token JWT
 router.post('/login', async (req, res) => {
-  const { usuario, password } = req.body
+  const { usuario, contrasena } = req.body
 
   try {
     const result = await pool.query(
@@ -24,19 +24,19 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ mensaje: 'Usuario no encontrado' })
     }
 
-    const passwordOk = await bcrypt.compare(password, user.password)
+    const passwordOk = await bcrypt.compare(contrasena, user.contrasena)
 
     if (!passwordOk) {
       return res.status(401).json({ mensaje: 'Contraseña incorrecta' })
     }
 
-    jwt.sign(
+    const token = jwt.sign(
       { id: user.id, usuario: user.usuario, rol: user.rol },
       process.env.JWT_SECRET,
       { expiresIn: '2h' } // Modificar si es necesario
     )
 
-    res.json({ usuario: user.usuario, rol: user.rol, nombre: user.nombre })
+    res.json({ token, usuario: user.usuario, rol: user.rol, nombre: user.nombre })
   } catch (error) {
     console.error('Error al autenticar usuario:', error)
     res.status(500).send('Error del servidor')
