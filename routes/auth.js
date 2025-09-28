@@ -36,11 +36,23 @@ router.post('/login', async (req, res) => {
       { expiresIn: '2h' } // Modificar si es necesario
     )
 
-    res.json({ token, usuario: user.usuario, rol: user.rol, nombre: user.nombre })
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      maxAge: 2 * 60 * 60 * 1000 // 2h
+    })
+
+    res.json({ usuario: user.usuario, rol: user.rol, nombre: user.nombre })
   } catch (error) {
     console.error('Error al autenticar usuario:', error)
     res.status(500).send('Error del servidor')
   }
+})
+
+router.post("/logout", (_, res) => {
+  res.clearCookie("token")
+  res.json({ mensaje: "Sesión cerrada" })
 })
 
 export default router

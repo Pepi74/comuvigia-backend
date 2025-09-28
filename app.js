@@ -9,6 +9,7 @@ import alertasRoutes from './routes/alertas.js'
 import tranmisionRoutes from './routes/transmision.js'
 import authRoutes from './routes/auth.js'
 import userRoutes from './routes/usuarios.js'
+import cookieParser from 'cookie-parser'
 
 dotenv.config()
 
@@ -26,6 +27,7 @@ const io = new Server(httpServer, {
 export { io };
 
 app.use(cors())
+app.use(cookieParser())
 
 app.use(json({ limit: '50mb' }))
 app.use(urlencoded({ limit: '50mb', extended: true }))
