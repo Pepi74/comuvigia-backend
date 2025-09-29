@@ -31,7 +31,7 @@ router.post('/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, usuario: user.usuario, rol: user.rol },
+      { id: user.id, usuario: user.usuario, rol: user.rol, nombre: user.nombre },
       process.env.JWT_SECRET,
       { expiresIn: '2h' } // Modificar si es necesario
     )
@@ -53,6 +53,20 @@ router.post('/login', async (req, res) => {
 router.post("/logout", (_, res) => {
   res.clearCookie("token")
   res.json({ mensaje: "Sesión cerrada" })
+})
+
+router.get('/check', (req, res) => {
+  const token = req.cookies?.token
+  if (!token) {
+    return res.status(401).json({ mensaje: 'No hay sesión activa' })
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET)
+    res.json({ usuario: decoded.usuario, rol: decoded.rol, nombre: decoded.nombre })
+  } catch (err) {
+    return res.status(403).json({ mensaje: 'Token inválido o expirado' })
+  }
 })
 
 export default router

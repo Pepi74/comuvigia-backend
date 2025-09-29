@@ -26,7 +26,10 @@ const io = new Server(httpServer, {
 // Exportamos `io` para usarlo en otras partes
 export { io };
 
-app.use(cors())
+app.use(cors({
+  origin: process.env.FRONTEND_URL,
+  credentials: true
+}))
 app.use(cookieParser())
 
 app.use(json({ limit: '50mb' }))
