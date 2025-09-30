@@ -108,7 +108,7 @@ INSERT INTO public.sectores (id, nombre_sector, descripcion) VALUES
 (3, 'Sector Centro', 'Sector centro de la comuna.');
 
 -- Insertar datos en la tabla camaras
-INSERT INTO public.camaras (id, nombre, posicion, direccion, estado_camara, ultima_conexion, link_camara, id_sector, link_camara_externo) VALUES
+INSERT INTO public.camaras ( nombre, posicion, direccion, estado_camara, ultima_conexion, link_camara, id_sector, link_camara_externo) VALUES
 (1, 'Cámara Plaza', '{-33.52,-70.603}', 'Doctor Luis Calvo Mackenna 1361', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_web', 3, 'http://localhost:5000/video_feed/1'),
 (2, 'Cámara Sur', '{-33.525,-70.6}', 'El Blanco 178', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp', 2, 'http://localhost:5000/video_feed/2'),
 (3, 'Cámara Centro', '{-33.511,-70.59}', 'Avda Departamental 10450', false, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp2', 3, 'http://localhost:5000/video_feed/3'),
