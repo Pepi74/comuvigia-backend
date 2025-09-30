@@ -24,12 +24,13 @@ router.post('/casos_prueba', async (req, res) => {
 
   const trimmedDelito = delito.trim();
   const timeout = 30000; // 30 segundos de timeout
-  const maxRetries = 1;
+  const maxRetries = 3;
   let retryCount = 0;
 
   const makeRequest = async () => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
+    console.log(process.env.IA_URL +'/api/casos_prueba')
 
     try {
       const response = await fetch(process.env.IA_URL+'/api/casos_prueba', {
@@ -40,7 +41,7 @@ router.post('/casos_prueba', async (req, res) => {
         body: JSON.stringify({ delito: trimmedDelito }),
         signal: controller.signal
       });
-
+      
       clearTimeout(timeoutId);
 
       // Verificar si la respuesta es OK (status 200-299)

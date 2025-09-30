@@ -1,4 +1,7 @@
 import tarfile
+import threading
+import pika
+
 import cv2
 import numpy as np
 import logging
@@ -17,11 +20,14 @@ import base64
 from flask import Flask, Response, jsonify, request
 from video_reconstructor import video_bp, video_reconstructor
 from flask_cors import CORS
+import queue
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": os.environ["FRONTEND_URL"]}})
 app.register_blueprint(video_bp, url_prefix='/')
 start_time = time.time()
+
+
 
 # Configuración
 DEFAULT_OUTPUT_SIZE = (640, 360)
@@ -36,6 +42,8 @@ S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
 S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
 S3_BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
 S3_REGION = "us-east-1"
+
+
 
 # Configuración de cámaras
 url = "http://backend:3000/api/camaras"
@@ -63,6 +71,103 @@ logger.addHandler(fh)
 ch = logging.StreamHandler()
 ch.setFormatter(fmt)
 logger.addHandler(ch)
+
+
+class RabbitPublisher:
+    def __init__(self, batch_time=1.0, max_frames=50):
+        # Configuración RabbitMQ
+        self.rabbit_host = os.getenv('RABBIT_HOST', 'rabbitmq')
+        self.rabbit_port = int(os.getenv('RABBIT_PORT', 5672))
+        self.rabbit_user = os.getenv('RABBITMQ_DEFAULT_USER', 'guest')
+        self.rabbit_password = os.getenv('RABBITMQ_DEFAULT_PASS', 'guest')
+        self.exchange = 'frames'
+
+        # Cola interna para batching
+        self.frame_batches = {}  # {camera_id: [frames]}
+        self.batch_time = batch_time
+        self.max_frames = max_frames
+        self.last_send_time = {}  # {camera_id: timestamp}
+
+        self._stop = threading.Event()
+        self.connection = None
+        self.channel = None
+        self.connect()
+
+        # Hilo para publicar batches sin bloquear
+        self.publish_thread = threading.Thread(target=self._publish_loop, daemon=True)
+        self.publish_thread.start()
+
+    def connect(self):
+        credentials = pika.PlainCredentials(self.rabbit_user, self.rabbit_password)
+        parameters = pika.ConnectionParameters(
+            host=self.rabbit_host,
+            port=self.rabbit_port,
+            credentials=credentials,
+            heartbeat=600,
+            blocked_connection_timeout=300
+        )
+        while not self._stop.is_set():
+            try:
+                self.connection = pika.BlockingConnection(parameters)
+                self.channel = self.connection.channel()
+                self.channel.exchange_declare(exchange=self.exchange, exchange_type='direct')
+                print("Conectado a RabbitMQ")
+                break
+            except Exception as e:
+                print(f"No se pudo conectar a RabbitMQ, reintentando en 5s: {e}")
+                time.sleep(5)
+
+    def publish_frame(self, camera_id, frame_bytes):
+        """Agrega un frame a la lista de batching"""
+        if camera_id not in self.frame_batches:
+            self.frame_batches[camera_id] = []
+            self.last_send_time[camera_id] = time.time()
+        self.frame_batches[camera_id].append(base64.b64encode(frame_bytes).decode('utf-8'))
+
+        # Si se alcanza el máximo de frames, enviamos inmediatamente
+        if len(self.frame_batches[camera_id]) >= self.max_frames:
+            self._send_batch(camera_id)
+
+    def _send_batch(self, camera_id):
+        frames = self.frame_batches.get(camera_id, [])
+        if not frames:
+            return
+
+        message = json.dumps({
+            "camera_id": camera_id,
+            "frames": frames,
+            "timestamp": time.time()
+        })
+
+        routing_key = f"camera_{camera_id}"
+
+        try:
+            self.channel.basic_publish(exchange=self.exchange, routing_key=routing_key, body=message)
+        except pika.exceptions.AMQPConnectionError:
+            print("Conexión perdida, reconectando...")
+            self.connect()
+            self.channel.basic_publish(exchange=self.exchange, routing_key=routing_key, body=message)
+
+        # Reset de batch
+        self.frame_batches[camera_id] = []
+        self.last_send_time[camera_id] = time.time()
+
+    def _publish_loop(self):
+        """Revisa periódicamente si hay batches que deben enviarse por tiempo"""
+        while not self._stop.is_set():
+            now = time.time()
+            for camera_id in list(self.frame_batches.keys()):
+                if self.frame_batches[camera_id] and (now - self.last_send_time[camera_id] >= self.batch_time):
+                    self._send_batch(camera_id)
+            time.sleep(0.1)  # Evita busy wait
+
+    def stop(self):
+        self._stop.set()
+        self.publish_thread.join()
+        if self.connection and not self.connection.is_closed:
+            self.connection.close()
+
+publisher = RabbitPublisher(batch_time=1.0, max_frames=50)
 
 class S3Client:
     def __init__(self):
@@ -435,21 +540,29 @@ def generate_frames(camera_id):
     last_time = time.time()
     error_count = 0
     
-    logger.info(f"Starting video feed for camera {camera_id_int}")
-    
+
+    no_frame_count = 0       # Contador de frames repetidos o inexistentes
+
+    logger.info(f"Starting video feed fasdfasdffasfor camera {camera_id_int}")
     while True:
+
         try:
             frame = stream.get_frame()
-            
-            if frame:
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+            if frame is not None:
+                # Publicar a RabbitMQ
+                publisher.publish_frame(camera_id_int, frame)
+
+                # Reset de error_count porque se recibió un frame válido
                 error_count = 0
                 
+                # Control de FPS
                 elapsed = time.time() - last_time
                 delay = max(0, (1/MAX_FPS) - elapsed)
                 time.sleep(delay)
                 last_time = time.time()
+
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
             else:
                 error_count += 1
                 if error_count > 5:
@@ -605,7 +718,7 @@ def save_frames():
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No se proporcionaron datos JSON'}), 400
-        print(data['frames'])
+        #print(data['frames'])
         # Campos obligatorios
         required_fields = ['camera_id', 'frames','fps']
         for field in required_fields:

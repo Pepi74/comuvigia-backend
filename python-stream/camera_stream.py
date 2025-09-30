@@ -79,6 +79,7 @@ def generate_frames():
         frame = video_stream.get_frame()
         
         if frame:
+            logger.info(f"Starting vidaasdfgasgfeo feed for camera ")
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
             
@@ -94,7 +95,7 @@ def generate_frames():
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
             _, jpeg = cv2.imencode('.jpg', error_frame)
             yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+                   b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\2\n')
             time.sleep(1)
 
 @app.route('/video_feed')
