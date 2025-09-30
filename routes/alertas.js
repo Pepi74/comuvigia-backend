@@ -37,6 +37,7 @@ router.get('/', verificarToken, verificarRol([1, 2]), async (_, res) => {
   
 // --- Recibir alerta del servicio IA ---
 // Por ahora sera sin verificacion, preguntar y definir bien como la IA enviara nuevas alertas antes de colocar middlewares y si es necesario tenerlos implementados
+// TODO: Implementar middleware para IA
 router.post('/nueva-alerta', async (req, res) => {
   try {
     const alerta = req.body;
@@ -204,6 +205,7 @@ router.post('/cambiar-estado/:id', verificarToken, verificarRol([1, 2]), async (
 })
 
 // Mismo caso de nueva alerta, preguntar y definir bien como lo va a hacer la IA con los nuevos cambios antes de verificar con middlewares
+// TODO: Separar en dos endpoints, otro para la IA (editar-descripcion-ia)
 router.put('/editar-descripcion/:id', async (req, res) => {
   const id = req.params.id;
   const { descripcion_suceso } = req.body;
