@@ -34,7 +34,7 @@ router.post('/register', verificarToken, verificarRol([2]), async(req, res) => {
 // Endpoint para obtener un listado de todos los usuarios
 router.get('/', verificarToken, verificarRol([2]), async (_, res) => {
   try {
-    const result = await pool.query('SELECT * FROM usuarios')
+    const result = await pool.query('SELECT id, usuario, nombre, rol FROM usuarios')
     res.json(result.rows)
   } catch (err) {
     console.error(err)
@@ -46,7 +46,7 @@ router.get('/', verificarToken, verificarRol([2]), async (_, res) => {
 router.get('/:id', verificarToken, verificarRol([1, 2]), async (req, res) => {
   const { id } = req.params
   try {
-    const result = await pool.query('SELECT * FROM usuarios WHERE id = $1', [id])
+    const result = await pool.query('SELECT id, usuario, nombre, rol FROM usuarios WHERE id = $1', [id])
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Usuario no encontrado" })
     }
@@ -61,7 +61,7 @@ router.get('/:id', verificarToken, verificarRol([1, 2]), async (req, res) => {
 router.get('/usuario', verificarToken, verificarRol([1, 2]), async (req, res) => {
   const usuario = req.body.usuario
   try {
-    const result = await pool.query('SELECT * FROM usuarios WHERE usuario = $1', [usuario])
+    const result = await pool.query('SELECT id, usuario, nombre, rol FROM usuarios WHERE usuario = $1', [usuario])
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Usuario no encontrado" })
     }
@@ -79,7 +79,7 @@ router.put('/:id', verificarToken, verificarRol([2]), async (req, res) => {
 
   try {
     const result = await pool.query(
-      'UPDATE usuarios SET rol = $1 WHERE id = $2 RETURNING id, rol',
+      'UPDATE usuarios SET rol = $1 WHERE id = $2 RETURNING id, usuario, nombre, rol',
       [rol, id]
     )
     if (result.rows.length === 0) {
@@ -96,7 +96,7 @@ router.put('/:id', verificarToken, verificarRol([2]), async (req, res) => {
 router.delete('/:id', verificarToken, verificarRol([2]), async (req, res) => {
   const { id } = req.params
   try {
-    const result = await pool.query('DELETE FROM usuarios WHERE id = $1 RETURNING id', [id])
+    const result = await pool.query('DELETE FROM usuarios WHERE id = $1 RETURNING id, usuario', [id])
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Usuario no encontrado" })
     }
