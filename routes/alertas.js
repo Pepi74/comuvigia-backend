@@ -3,6 +3,8 @@ import { Router } from 'express'
 import pool from '../config/db.js'
 import { createClient } from 'redis';
 import { io } from '../app.js';
+import { verificarToken } from '../middlewares/auth.js';
+import { verificarRol } from '../middlewares/roles.js';
 
 const router = Router()
 
@@ -14,7 +16,7 @@ const redisClient = createClient(
 );
 await redisClient.connect();
 
-router.get('/', async (_, res) => {
+router.get('/', verificarToken, verificarRol([1, 2]), async (_, res) => {
   try {
     const result = await pool.query('SELECT * FROM alertas')
     const alerts = result.rows
@@ -34,7 +36,7 @@ router.get('/', async (_, res) => {
 })
   
 // --- Recibir alerta del servicio IA ---
-// En tu endpoint de nueva-alerta en Node.js
+// Por ahora sera sin verificacion, preguntar y definir bien como la IA enviara nuevas alertas antes de colocar middlewares y si es necesario tenerlos implementados
 router.post('/nueva-alerta', async (req, res) => {
   try {
     const alerta = req.body;
@@ -120,7 +122,7 @@ router.post('/nueva-alerta', async (req, res) => {
 });
   
 // --- Enviar alertas no vistas ---
-router.get('/no-vistas', async (_, res) => {
+router.get('/no-vistas', verificarToken, verificarRol([1, 2]), async (_, res) => {
   try {
     const noVistasIds = await redisClient.sMembers('alertas_no_vistas');
     const multi = redisClient.multi();
@@ -151,14 +153,14 @@ router.get('/no-vistas', async (_, res) => {
 });
 
 // --- Enviar últimas 100 alertas ---
-router.get('/ultimas', async (_, res) => {
+router.get('/ultimas', verificarToken, verificarRol([1, 2]), async (_, res) => {
   const ultimas = await redisClient.lRange('alertas', 0, 99);
   const alertas = ultimas.map(JSON.parse);
   res.json(alertas);
 });
 
 // --- Marcar alertas como vistas ---
-router.post('/marcar-vista/:id', async (req, res) => {
+router.post('/marcar-vista/:id', verificarToken, verificarRol([1, 2]), async (req, res) => {
   const id = req.params.id;
   const estado = req.body.estado; // 1 -> "Confirmada", 2 -> "Falso Positivo"
 
@@ -181,7 +183,7 @@ router.post('/marcar-vista/:id', async (req, res) => {
 });
 
 // Modificar estado de alerta
-router.post('/cambiar-estado/:id', async (req, res) => {
+router.post('/cambiar-estado/:id', verificarToken, verificarRol([1, 2]), async (req, res) => {
   const id = req.params.id;
   const estado = req.body.estado; // 1 -> "Confirmada", 2 -> "Falso Positivo"
   await pool.query('UPDATE alertas SET estado=$1 WHERE id=$2', [estado, id]);
@@ -201,6 +203,7 @@ router.post('/cambiar-estado/:id', async (req, res) => {
   res.json({ ok: true });
 })
 
+// Mismo caso de nueva alerta, preguntar y definir bien como lo va a hacer la IA con los nuevos cambios antes de verificar con middlewares
 router.put('/editar-descripcion/:id', async (req, res) => {
   const id = req.params.id;
   const { descripcion_suceso } = req.body;
@@ -238,7 +241,7 @@ router.put('/editar-descripcion/:id', async (req, res) => {
   }
 });
 
-router.delete('/eliminar-alerta/:id', async (req, res) => {
+router.delete('/eliminar-alerta/:id', verificarToken, verificarRol([2]), async (req, res) => {
   const id = req.params.id;
   try {
     // Eliminar en Postgres
@@ -270,7 +273,7 @@ router.delete('/eliminar-alerta/:id', async (req, res) => {
 })
 
 // Obtener alertas por id de camara
-router.get('/camara/:id_camara', async (req, res) => {
+router.get('/camara/:id_camara', verificarToken, verificarRol([1, 2]), async (req, res) => {
   const id_camara = req.params.id_camara
   try {
     const result = await pool.query('SELECT * FROM alertas WHERE id_camara = $1 ORDER BY hora_suceso DESC', [id_camara])
@@ -290,7 +293,7 @@ router.get('/camara/:id_camara', async (req, res) => {
   }
 })
 
-router.get('/estadisticas-totales', async (req, res) => {
+router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async (req, res) => {
   let client;
   try {
     const { dias = 7, fecha_inicio, fecha_fin, group } = req.query;

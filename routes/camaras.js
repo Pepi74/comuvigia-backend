@@ -1,13 +1,15 @@
 // Endpoints para camaras
 import { Router } from 'express'
 import pool from '../config/db.js'
+import { verificarToken } from '../middlewares/auth.js'
+import { verificarRol } from '../middlewares/roles.js'
 
 const router = Router()
 
 //---------- CRUD CÁMARAS ----------
 
 // GET - Obtener todas las cámaras
-router.get('/', async (_, res) => {
+router.get('/', verificarToken, async (_, res) => {
   try {
     const result = await pool.query('SELECT * FROM camaras ORDER BY id')
     res.json(result.rows)
@@ -17,7 +19,7 @@ router.get('/', async (_, res) => {
   }
 })
 
-router.get('/cantidad-alertas', async (req, res) => {
+router.get('/cantidad-alertas', verificarToken, async (_, res) => {
   try {
     const result = await pool.query('SELECT * FROM camaras_con_alertas');
     const datosConvertidos = result.rows.map(cam => ({
@@ -31,7 +33,7 @@ router.get('/cantidad-alertas', async (req, res) => {
   }
 })
 
-router.get('/nombre-camaras', async (_, res) => {
+router.get('/nombre-camaras', verificarToken, async (_, res) => {
   try {
     const result = await pool.query('SELECT id, nombre FROM camaras');
     const cameraMap = {};
