@@ -48,7 +48,7 @@ router.get('/nombre-camaras', verificarToken, async (_, res) => {
 })
 
 // GET - Obtener cámara
-router.get('/:id', async (req, res) => {
+router.get('/:id', verificarToken, async (req, res) => {
   try {
     const { id } = req.params
     const result = await pool.query('SELECT * FROM camaras WHERE id = $1', [id])
@@ -65,7 +65,7 @@ router.get('/:id', async (req, res) => {
 })
 
 // POST - Crear nueva cámara
-router.post('/', async (req, res) => {
+router.post('/', verificarToken, verificarRol([2]), async (req, res) => {
   try {
     const {
       nombre,
@@ -121,7 +121,7 @@ router.post('/', async (req, res) => {
 })
 
 // PUT - Actualizar cámara
-router.put('/:id', async (req, res) => {
+router.put('/:id', verificarToken, verificarRol([2]), async (req, res) => {
   try {
     const { id } = req.params
     const {
@@ -184,7 +184,7 @@ router.put('/:id', async (req, res) => {
 })
 
 // PATCH - Actualizar parcialmente una cámara
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', verificarToken, verificarRol([2]), async (req, res) => {
   try {
     const { id } = req.params
     const updates = req.body
@@ -240,7 +240,7 @@ router.patch('/:id', async (req, res) => {
 })
 
 // DELETE - Eliminar cámara
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verificarToken, verificarRol([2]), async (req, res) => {
   try {
     const { id } = req.params
 
