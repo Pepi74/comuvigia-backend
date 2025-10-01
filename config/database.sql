@@ -117,12 +117,12 @@ INSERT INTO public.sectores (id, nombre_sector, descripcion) VALUES
 
 -- Insertar datos en la tabla camaras
 INSERT INTO public.camaras ( nombre, posicion, direccion, estado_camara, ultima_conexion, link_camara, id_sector, link_camara_externo) VALUES
-(1, 'Cámara Plaza', '{-33.52,-70.603}', 'Doctor Luis Calvo Mackenna 1361', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_web', 3, 'http://localhost:5000/video_feed/1'),
-(2, 'Cámara Sur', '{-33.525,-70.6}', 'El Blanco 178', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp', 2, 'http://localhost:5000/video_feed/2'),
-(3, 'Cámara Centro', '{-33.511,-70.59}', 'Avda Departamental 10450', false, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp2', 3, 'http://localhost:5000/video_feed/3'),
-(4, 'Cámara Merodeo', '{-33.51, -70.603}', 'Nva Uno 6476', true, '2024-06-09 19:30:00', '/loitering.mp4', 1, ''),
-(5, 'Camára Asalto a Hogar', '{-33.53, -70.603}', 'Yungay 645', true, '2024-06-09 19:30:00', '/burglary.mp4', 1, ''),
-(6, 'Cámara Portonazo', '{-33.52, -70.61}', 'Atahualpa 6892', true, '2024-06-09 19:30:00', '/portonazo.mp4', 2, '');
+('Cámara Plaza', '{-33.52,-70.603}', 'Doctor Luis Calvo Mackenna 1361', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_web', 3, 'http://localhost:5000/video_feed/1'),
+('Cámara Sur', '{-33.525,-70.6}', 'El Blanco 178', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp', 2, 'http://localhost:5000/video_feed/2'),
+('Cámara Centro', '{-33.511,-70.59}', 'Avda Departamental 10450', false, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp2', 3, 'http://localhost:5000/video_feed/3'),
+('Cámara Merodeo', '{-33.51, -70.603}', 'Nva Uno 6476', true, '2024-06-09 19:30:00', '/loitering.mp4', 1, ''),
+('Camára Asalto a Hogar', '{-33.53, -70.603}', 'Yungay 645', true, '2024-06-09 19:30:00', '/burglary.mp4', 1, ''),
+('Cámara Portonazo', '{-33.52, -70.61}', 'Atahualpa 6892', true, '2024-06-09 19:30:00', '/portonazo.mp4', 2, '');
 
 -- Insertar datos en la tabla alertas
 INSERT INTO public.alertas (id, id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso, estado, tipo, clip) VALUES
