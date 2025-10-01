@@ -12,18 +12,18 @@ const router = Router()
 // Endpoint para registrar un usuario en BD con contraseña hasheada
 router.post('/register', verificarToken, verificarRol([2]), async(req, res) => {
 
-    const { usuario, contrasena, nombre } = req.body
+    const { usuario, contrasena, nombre, rol } = req.body
 
     if (!usuario || !contrasena || !nombre) return res.status(400).json({ error: "Faltan campos obligatorios" })
     
     const hash = await bcrypt.hash(contrasena, 10)
     
     try{
-        await pool.query(
-          'INSERT INTO usuarios (usuario, contrasena, nombre) VALUES ($1, $2, $3)',
-          [usuario, hash, nombre]
+        const result = await pool.query(
+          'INSERT INTO usuarios (usuario, contrasena, nombre, rol) VALUES ($1, $2, $3, $4) RETURNING id, usuario, nombre, rol',
+          [usuario, hash, nombre, rol]
         )
-         res.status(201).json({ message: 'Usuario creado con éxito' })
+        res.status(201).json(result.rows[0])
     }
     catch(err){
         console.error(err)
@@ -85,7 +85,7 @@ router.put('/:id', verificarToken, verificarRol([2]), async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Usuario no encontrado" })
     }
-    res.json({ message: "Rol de Usuario actualizado", usuario: result.rows[0] })
+    res.json(result.rows[0])
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: "Error al actualizar usuario" })
