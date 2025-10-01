@@ -348,11 +348,19 @@ class VideoStream:
         self.preview_source = None
         self.fps_win = deque(maxlen=60)  # ~6–10s según tu delay
         self.last_fps_log = 0
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 5
+        self.alert_sent = False
+        self.disabled = False
+        self.last_reconnect_time = None
 
     def start(self):
         self.segmenter.start()
         self.preview_source = self.segmenter.preview_url
         self.running = True
+        self.reconnect_attempts = 0  # Reset contador al iniciar
+        self.alert_sent = False
+        self.disabled = False
         self.reconnect_camera()
         self.thread = Thread(target=self.update, daemon=True)
         self.thread.start()
@@ -361,6 +369,12 @@ class VideoStream:
     def update(self):
         while self.running:
             try:
+                # Verificar si la cámara está deshabilitada por demasiados intentos fallidos
+                if self.disabled:
+                    logger.warning(f"Cámara {self.camera_id}: DESHABILITADA - Esperando intervención manual")
+                    time.sleep(10)  # Esperar antes de revisar nuevamente
+                    continue
+
                 start_time = time.time() 
 
                 # Si FFmpeg murió, reiniciar
@@ -395,6 +409,12 @@ class VideoStream:
                     self.reconnect_camera()
                     time.sleep(1)
                     continue
+
+                # Resetear contador de reconexiones si la captura es exitosa
+                if self.reconnect_attempts > 0:
+                    logger.info(f"Cámara {self.camera_id}: Conexión restaurada, resetear contador de reconexiones")
+                    self.reconnect_attempts = 0
+                    self.alert_sent = False
 
                 # Procesar frame exitoso
                 processed_frame = cv2.resize(frame, DEFAULT_OUTPUT_SIZE)
@@ -514,6 +534,17 @@ class VideoStream:
     def reconnect_camera(self):
         """Reconectar a la cámara de manera segura"""
         try:
+            # Incrementar contador de intentos
+            self.reconnect_attempts += 1
+            self.last_reconnect_time = datetime.now()
+            
+            logger.info(f"Cámara {self.camera_id}: Intento de reconexión {self.reconnect_attempts}/{self.max_reconnect_attempts}")
+
+            # Verificar si se superó el límite de intentos
+            if self.reconnect_attempts >= self.max_reconnect_attempts and not self.alert_sent:
+                self.handle_reconnection_failure()
+                return False
+            
             # Liberar captura anterior
             if hasattr(self, 'cap') and self.cap is not None:
                 try:
@@ -532,6 +563,10 @@ class VideoStream:
             if self.cap is None or not self.cap.isOpened():
                 logger.error(f"Cámara {self.camera_id}: Reconexión preview fallida")
                 self.cap = None
+                # Verificar si es el último intento fallido
+                if self.reconnect_attempts >= self.max_reconnect_attempts and not self.alert_sent:
+                    self.handle_reconnection_failure()
+                
                 return False
             
             # Configurar propiedades
@@ -543,7 +578,81 @@ class VideoStream:
         except Exception as e:
             logger.error(f"Cámara {self.camera_id}: Error en reconexión preview: {str(e)}")
             self.cap = None
+            # Verificar si es el último intento fallido
+            if self.reconnect_attempts >= self.max_reconnect_attempts and not self.alert_sent:
+                self.handle_reconnection_failure()
             return False
+
+    def handle_reconnection_failure(self):
+        """Manejar fallo de reconexión después de múltiples intentos"""
+        logger.error(f"Cámara {self.camera_id}: SUPERADO LÍMITE DE RECONEXIONES ({self.max_reconnect_attempts} intentos)")
+        self.disabled = True
+        self.alert_sent = True
+        
+        # Enviar alerta a la API
+        self.send_reconnection_alert()
+        
+        # Detener componentes
+        self.stop_components()
+
+    def send_reconnection_alert(self):
+        """Enviar alerta a la API cuando fallan las reconexiones"""
+        try:
+            alert_data = {
+                "camera_id": self.camera_id,
+                "alert_type": "reconnection_failure",
+                "message": f"Cámara {self.camera_id} superó el límite de {self.max_reconnect_attempts} intentos de reconexión",
+                "reconnect_attempts": self.reconnect_attempts,
+                "max_attempts": self.max_reconnect_attempts,
+                "last_attempt_time": self.last_reconnect_time.isoformat() if self.last_reconnect_time else datetime.now().isoformat(),
+                "timestamp": datetime.now().isoformat(),
+                "status": "disabled",
+                "stream_url": self.link_camara
+            }
+            
+            api_url = "http://backend:3000/api/alerts/cam-reconnection-failure/nueva-alerta"
+            
+            response = requests.post(
+                api_url,
+                json=alert_data,
+                headers={'Content-Type': 'application/json'},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Cámara {self.camera_id}: Alerta enviada exitosamente a la API")
+            else:
+                logger.error(f"Cámara {self.camera_id}: Error al enviar alerta. Código: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"Cámara {self.camera_id}: Error enviando alerta a API: {str(e)}")
+
+    def stop_components(self):
+        """Detener componentes de la cámara de manera segura"""
+        try:
+            if self.cap:
+                self.cap.release()
+                self.cap = None
+            
+            if self.segmenter:
+                self.segmenter.stop()
+                
+            self.frame = None
+            logger.info(f"Cámara {self.camera_id}: Componentes detenidos por falla de reconexión")
+        except Exception as e:
+            logger.error(f"Cámara {self.camera_id}: Error deteniendo componentes: {str(e)}")
+
+    def enable_camera(self):
+        """Rehabilitar la cámara manualmente"""
+        if self.disabled:
+            self.disabled = False
+            self.reconnect_attempts = 0
+            self.alert_sent = False
+            self.running = True
+            self.reconnect_camera()
+            logger.info(f"Cámara {self.camera_id}: Rehabilitada manualmente")
+            return True
+        return False
 
     def is_capture_active(self):
         """Verificar si la captura está activa"""
@@ -952,6 +1061,13 @@ def debug_camera(camera_id):
                 "frames_buffer_size": len(stream.frames_buffer),
                 "buffer_duration": f"{(len(stream.frames_buffer) / MAX_FPS):.1f}s",
                 "time_since_last_batch": round(time.time() - stream.last_batch_time, 1),
+                "reconnection_status": {
+                    "attempts": stream.reconnect_attempts,
+                    "max_attempts": stream.max_reconnect_attempts,
+                    "disabled": stream.disabled,
+                    "alert_sent": stream.alert_sent,
+                    "last_attempt_time": stream.last_reconnect_time.isoformat() if stream.last_reconnect_time else None
+                },
                 "batch_config": {
                     "size_frames": BATCH_SIZE,
                     "size_seconds": BATCH_SIZE / MAX_FPS,
@@ -979,6 +1095,35 @@ def health_check():
         "s3_connected": any(stream.s3_client.connected for stream in video_streams.values())
     }
     return jsonify(health_status), 200
+
+@app.route('/api/cameras/<camera_id>/enable', methods=['POST'])
+def enable_camera(camera_id):
+    """Endpoint para rehabilitar una cámara manualmente"""
+    try:
+        camera_id_int = int(camera_id)
+        if camera_id_int not in video_streams:
+            return jsonify({"error": f"Cámara {camera_id} no encontrada"}), 404
+        
+        stream = video_streams[camera_id_int]
+        
+        if stream.enable_camera():
+            return jsonify({
+                "success": True,
+                "message": f"Cámara {camera_id} rehabilitada exitosamente",
+                "camera_id": camera_id,
+                "status": "enabled"
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "message": f"Cámara {camera_id} no estaba deshabilitada",
+                "camera_id": camera_id,
+                "status": "already_enabled"
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"Error rehabilitando cámara {camera_id}: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=FLASK_PORT, threaded=True)
