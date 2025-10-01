@@ -7,7 +7,9 @@ import indexRoutes from './routes/index.js'
 import camarasRoutes from './routes/camaras.js'
 import alertasRoutes from './routes/alertas.js'
 import tranmisionRoutes from './routes/transmision.js'
-
+import authRoutes from './routes/auth.js'
+import userRoutes from './routes/usuarios.js'
+import cookieParser from 'cookie-parser'
 
 dotenv.config()
 
@@ -24,7 +26,11 @@ const io = new Server(httpServer, {
 // Exportamos `io` para usarlo en otras partes
 export { io };
 
-app.use(cors())
+app.use(cors({
+  origin: process.env.FRONTEND_URL,
+  credentials: true
+}))
+app.use(cookieParser())
 
 app.use(json({ limit: '50mb' }))
 app.use(urlencoded({ limit: '50mb', extended: true }))
@@ -32,6 +38,8 @@ app.use('/', indexRoutes)
 app.use('/api/camaras', camarasRoutes)
 app.use('/api/alertas', alertasRoutes)
 app.use('/api/transmision', tranmisionRoutes)
+app.use('/api/auth', authRoutes)
+app.use('/api/usuarios', userRoutes)
 
 // WebSocket: manejar conexiones entrantes
 io.on('connection', (socket) => {

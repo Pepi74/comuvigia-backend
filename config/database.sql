@@ -29,6 +29,14 @@ CREATE TABLE alertas (
     estado SMALLINT NOT NULL DEFAULT 0 -- Estado de alerta, 0: "En Observación", 1: "Confirmada", 2: "Falso Positivo"
 );
 
+CREATE TABLE usuarios (
+    id SERIAL PRIMARY KEY,
+    usuario VARCHAR(50) UNIQUE NOT NULL,
+    contrasena TEXT NOT NULL,
+    nombre VARCHAR(100) NOT NULL,
+    rol SMALLINT NOT NULL DEFAULT 0 -- 0: 'invitado', 1: 'funcionario', 2: 'administrador'
+)
+
 CREATE TABLE tipos_alerta (
     id SERIAL PRIMARY KEY, -- 0: "No especificado", 1: "Merodeo", 2: "Portonazo"...*se puede ir agregando mas si es necesario*
     nombre_tipo VARCHAR(100) ,
@@ -45,6 +53,7 @@ SELECT
     c.estado_camara,
     c.ultima_conexion,
     c.link_camara,
+    c.id_sector,
     c.link_camara_externo,
     COUNT(a.id) AS total_alertas
 FROM
@@ -107,13 +116,13 @@ INSERT INTO public.sectores (id, nombre_sector, descripcion) VALUES
 (3, 'Sector Centro', 'Sector centro de la comuna.');
 
 -- Insertar datos en la tabla camaras
-INSERT INTO public.camaras (id, nombre, posicion, direccion, estado_camara, ultima_conexion, link_camara, id_sector) VALUES
-(1, 'Cámara Plaza', '{-33.52,-70.603}', 'Avenida 123', true, '2024-06-09 19:30:00', 'http://192.168.194.154:5001/video', 3),
-(2, 'Cámara Sur', '{-33.525,-70.6}', 'Avenida 123', true, '2024-06-09 19:30:00', 'http://192.168.194.154:5002/video', 2),
-(3, 'Cámara Centro', '{-33.511,-70.59}', 'Avenida 123', false, '2024-06-09 19:30:00', '', 3),
-(4, 'Cámara Nva Uno C', '{-33.51294207728343,-70.59412183271313}', 'Nva Uno 6476', true, '2024-06-09 19:30:00', '', 1),
-(5, 'Camára Yungay P', '{-33.52300949975702,-70.61148997793823}', 'Yungay 645', true, '2024-06-09 19:30:00', '', 1),
-(6, 'Cámara Poniente AH', '{-33.517979467788265,-70.60499751348732}', 'Atahualpa 6892', true, '2024-06-09 19:30:00', '', 2);
+INSERT INTO public.camaras ( nombre, posicion, direccion, estado_camara, ultima_conexion, link_camara, id_sector, link_camara_externo) VALUES
+('Cámara Plaza', '{-33.52,-70.603}', 'Doctor Luis Calvo Mackenna 1361', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_web', 3, 'http://localhost:5000/video_feed/1'),
+('Cámara Sur', '{-33.525,-70.6}', 'El Blanco 178', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp', 2, 'http://localhost:5000/video_feed/2'),
+('Cámara Centro', '{-33.511,-70.59}', 'Avda Departamental 10450', false, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp2', 3, 'http://localhost:5000/video_feed/3'),
+('Cámara Merodeo', '{-33.51, -70.603}', 'Nva Uno 6476', true, '2024-06-09 19:30:00', '/loitering.mp4', 1, ''),
+('Camára Asalto a Hogar', '{-33.53, -70.603}', 'Yungay 645', true, '2024-06-09 19:30:00', '/burglary.mp4', 1, ''),
+('Cámara Portonazo', '{-33.52, -70.61}', 'Atahualpa 6892', true, '2024-06-09 19:30:00', '/portonazo.mp4', 2, '');
 
 -- Insertar datos en la tabla alertas
 INSERT INTO public.alertas (id, id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso, estado, tipo, clip) VALUES
