@@ -92,6 +92,8 @@ router.put('/:id', verificarToken, verificarRol([2]), async (req, res) => {
   }
 })
 
+// TODO: Endpoint para modificar usuario, contraseña, nombre y/o rol
+
 // Endpoint para eliminar usuario por id
 router.delete('/:id', verificarToken, verificarRol([2]), async (req, res) => {
   const { id } = req.params
