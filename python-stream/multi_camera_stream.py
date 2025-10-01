@@ -74,7 +74,7 @@ logger.addHandler(ch)
 
 
 class RabbitPublisher:
-    def __init__(self, batch_time=1.0, max_frames=50):
+    def __init__(self, prefetch_count=10):
         # Configuración RabbitMQ
         self.rabbit_host = os.getenv('RABBIT_HOST', 'rabbitmq')
         self.rabbit_port = int(os.getenv('RABBIT_PORT', 5672))
@@ -82,35 +82,31 @@ class RabbitPublisher:
         self.rabbit_password = os.getenv('RABBITMQ_DEFAULT_PASS', 'guest')
         self.exchange = 'frames'
 
-        # Cola interna para batching
-        self.frame_batches = {}  # {camera_id: [frames]}
-        self.batch_time = batch_time
-        self.max_frames = max_frames
-        self.last_send_time = {}  # {camera_id: timestamp}
-
         self._stop = threading.Event()
         self.connection = None
         self.channel = None
+        self.prefetch_count = prefetch_count
+
+        self._lock = threading.Lock()
         self.connect()
 
-        # Hilo para publicar batches sin bloquear
-        self.publish_thread = threading.Thread(target=self._publish_loop, daemon=True)
-        self.publish_thread.start()
-
     def connect(self):
+        """Conecta a RabbitMQ y declara exchange"""
         credentials = pika.PlainCredentials(self.rabbit_user, self.rabbit_password)
         parameters = pika.ConnectionParameters(
             host=self.rabbit_host,
             port=self.rabbit_port,
             credentials=credentials,
             heartbeat=600,
-            blocked_connection_timeout=300
+            blocked_connection_timeout=300,
         )
         while not self._stop.is_set():
             try:
                 self.connection = pika.BlockingConnection(parameters)
                 self.channel = self.connection.channel()
                 self.channel.exchange_declare(exchange=self.exchange, exchange_type='direct')
+                # Control de prefetch para no saturar al consumidor
+                self.channel.basic_qos(prefetch_count=self.prefetch_count)
                 print("Conectado a RabbitMQ")
                 break
             except Exception as e:
@@ -118,56 +114,36 @@ class RabbitPublisher:
                 time.sleep(5)
 
     def publish_frame(self, camera_id, frame_bytes):
-        """Agrega un frame a la lista de batching"""
-        if camera_id not in self.frame_batches:
-            self.frame_batches[camera_id] = []
-            self.last_send_time[camera_id] = time.time()
-        self.frame_batches[camera_id].append(base64.b64encode(frame_bytes).decode('utf-8'))
-
-        # Si se alcanza el máximo de frames, enviamos inmediatamente
-        if len(self.frame_batches[camera_id]) >= self.max_frames:
-            self._send_batch(camera_id)
-
-    def _send_batch(self, camera_id):
-        frames = self.frame_batches.get(camera_id, [])
-        if not frames:
-            return
-
-        message = json.dumps({
-            "camera_id": camera_id,
-            "frames": frames,
-            "timestamp": time.time()
-        })
+        """Publica un frame JPEG directamente como mensaje"""
+        if not isinstance(frame_bytes, (bytes, bytearray)):
+            raise TypeError(f"publish_frame requiere bytes, no {type(frame_bytes)}")
 
         routing_key = f"camera_{camera_id}"
-
-        try:
-            self.channel.basic_publish(exchange=self.exchange, routing_key=routing_key, body=message)
-        except pika.exceptions.AMQPConnectionError:
-            print("Conexión perdida, reconectando...")
-            self.connect()
-            self.channel.basic_publish(exchange=self.exchange, routing_key=routing_key, body=message)
-
-        # Reset de batch
-        self.frame_batches[camera_id] = []
-        self.last_send_time[camera_id] = time.time()
-
-    def _publish_loop(self):
-        """Revisa periódicamente si hay batches que deben enviarse por tiempo"""
-        while not self._stop.is_set():
-            now = time.time()
-            for camera_id in list(self.frame_batches.keys()):
-                if self.frame_batches[camera_id] and (now - self.last_send_time[camera_id] >= self.batch_time):
-                    self._send_batch(camera_id)
-            time.sleep(0.1)  # Evita busy wait
+        with self._lock:
+            try:
+                self.channel.basic_publish(
+                    exchange=self.exchange,
+                    routing_key=routing_key,
+                    body=frame_bytes
+                )
+            except (pika.exceptions.AMQPConnectionError, pika.exceptions.ChannelClosedByBroker) as e:
+                
+                print(f"Conexión perdida al publicar, reconectando...: {e}")
+                self.connect()
+                self.channel.basic_publish(
+                    exchange=self.exchange,
+                    routing_key=routing_key,
+                    body=frame_bytes
+                )
 
     def stop(self):
         self._stop.set()
-        self.publish_thread.join()
-        if self.connection and not self.connection.is_closed:
-            self.connection.close()
+        with self._lock:
+            if self.connection and not self.connection.is_closed:
+                self.connection.close()
 
-publisher = RabbitPublisher(batch_time=1.0, max_frames=50)
+publisher = RabbitPublisher(prefetch_count=10)
+
 
 class S3Client:
     def __init__(self):
@@ -327,6 +303,8 @@ class VideoStream:
         logger.info(f"Stream de cámara {self.camera_id} iniciado")
 
     def update(self):
+        last_publish_time = 0
+        MAX_PUBLISH_FPS = 15  # ajustar según lo que quieras enviar a RabbitMQ
         while self.running:
             try:
                 if self.cap is None:
@@ -345,7 +323,6 @@ class VideoStream:
                         continue
                     
                     logger.info(f"Cámara {self.camera_id}: Conectada exitosamente")
-                
                 ret, frame = self.cap.read()
                 if not ret:
                     logger.warning(f"Cámara {self.camera_id}: Frame vacío - reconectando...")
@@ -353,8 +330,15 @@ class VideoStream:
                     self.cap = None
                     time.sleep(1)
                     continue
-
-                # Procesamiento
+                camera_id_int = self.camera_id
+                # 🔹 Control de FPS para publicar
+                current_time = time.time()
+                if current_time - last_publish_time >= 1.0 / MAX_PUBLISH_FPS:
+                    _, jpeg_buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                    jpeg_bytes = jpeg_buffer.tobytes()
+                    publisher.publish_frame(camera_id_int, jpeg_bytes)
+                    last_publish_time = current_time  
+                
                 processed_frame = cv2.resize(frame, DEFAULT_OUTPUT_SIZE)
                 
                 with self.lock:
@@ -425,6 +409,8 @@ class VideoStreamOpenCV:
     def update(self):
         # Para streams HTTP con OpenCV
         cap = cv2.VideoCapture(self.link_camara)
+        last_publish_time = 0
+        MAX_PUBLISH_FPS = 15  # ajustar según lo que quieras enviar a RabbitMQ
         
         while self.running:
             try:
@@ -435,10 +421,16 @@ class VideoStreamOpenCV:
                     cap.release()
                     cap = cv2.VideoCapture(self.link_camara)
                     continue
+                camera_id_int = self.camera_id
+                # 🔹 Control de FPS para publicar
+                current_time = time.time()
+                if current_time - last_publish_time >= 1.0 / MAX_PUBLISH_FPS:
+                    _, jpeg_buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                    jpeg_bytes = jpeg_buffer.tobytes()
+                    publisher.publish_frame(camera_id_int, jpeg_bytes)
+                    last_publish_time = current_time    
 
-                # Procesamiento
                 processed_frame = cv2.resize(frame, DEFAULT_OUTPUT_SIZE)
-                
                 with self.lock:
                     self.frame = processed_frame
                     
@@ -550,7 +542,7 @@ def generate_frames(camera_id):
             frame = stream.get_frame()
             if frame is not None:
                 # Publicar a RabbitMQ
-                publisher.publish_frame(camera_id_int, frame)
+                
 
                 # Reset de error_count porque se recibió un frame válido
                 error_count = 0
