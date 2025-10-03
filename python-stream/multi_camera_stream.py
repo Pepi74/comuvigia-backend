@@ -742,6 +742,7 @@ class FFmpegSegmenter:
 # Inicializar streams para todas las cámaras
 video_streams = {}
 cameras_data = json.loads(CAMERAS) if isinstance(CAMERAS, str) else CAMERAS
+print(cameras_data)
 for camera in cameras_data:
     cam_id = camera["id"]
     config = camera

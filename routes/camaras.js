@@ -9,7 +9,7 @@ const router = Router()
 //---------- CRUD CÁMARAS ----------
 
 // GET - Obtener todas las cámaras
-router.get('/', verificarToken, async (_, res) => {
+router.get('/', async (_, res) => {
   try {
     const result = await pool.query('SELECT * FROM camaras ORDER BY id')
     res.json(result.rows)
