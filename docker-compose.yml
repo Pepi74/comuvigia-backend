@@ -9,22 +9,25 @@ services:
     restart: unless-stopped
     networks:
       - default
+
   python-stream:
     build: ./python-stream
     container_name: python-stream
     ports:
       - "5000:5000"
     env_file:
-    - .env
+      - .env
     environment:
       - S3_ENDPOINT=http://minio:9000
     depends_on:
       - minio
+      - rabbitmq
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - default
+
   minio:
     image: minio/minio
     container_name: minio
@@ -40,22 +43,20 @@ services:
       - minio_data:/data
     command: server /data --console-address ":9001"
     restart: unless-stopped
+
   backend:
     build: .
-    #environment:
-    #  - DB_USER=${DB_USER}
-    #  - DB_HOST=${DB_HOST}
-    #  - DB_NAME=${DB_NAME}
-    #  - DB_PASSWORD=${DB_PASSWORD}
-    #  - DB_PORT=${DB_PORT}
     env_file:
-    - .env
+      - .env
     depends_on:
       - postgres
     ports:
-    - "3000:3000"
+      - "3000:3000"
     environment:
       - S3_ENDPOINT=http://minio:9000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   postgres:
     image: postgres:17
     restart: unless-stopped
@@ -67,6 +68,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+
   pgadmin:
     image: dpage/pgadmin4
     restart: unless-stopped
@@ -79,6 +81,7 @@ services:
       - postgres
     volumes:
       - pgadmin-data:/var/lib/pgadmin
+
   redis:
     image: redis:7
     restart: unless-stopped
@@ -86,6 +89,7 @@ services:
       - "6379:6379"
     volumes:
       - redisdata:/data
+
   redis-commander:
     image: rediscommander/redis-commander:latest
     restart: unless-stopped
@@ -95,6 +99,17 @@ services:
       - "8082:8081"
     depends_on:
       - redis
+
+  rabbitmq:
+    image: rabbitmq:management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"   # Puerto AMQP para la IA
+      - "15672:15672" # Consola web
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    restart: unless-stopped
 
 volumes:
   pgdata:

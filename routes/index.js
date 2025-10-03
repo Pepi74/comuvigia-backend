@@ -21,12 +21,13 @@ router.post('/casos_prueba', async (req, res) => {
   }
 
   const timeout = 30000; // 30 segundos de timeout
-  const maxRetries = 1;
+  const maxRetries = 3;
   let retryCount = 0;
 
   const makeRequest = async () => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
+    console.log(process.env.IA_URL +'/api/casos_prueba')
 
     try {
       const response = await fetch(process.env.IA_URL + '/api/casos_prueba', {
@@ -38,7 +39,7 @@ router.post('/casos_prueba', async (req, res) => {
         body: JSON.stringify({ id, link_camara }),
         signal: controller.signal
       });
-
+      
       clearTimeout(timeoutId);
 
       if (!response.ok) {
