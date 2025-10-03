@@ -146,16 +146,16 @@ router.post('/cam-reconnection-failure/nueva-alerta', async (req, res) => {
     const id_camara = camera_id;
     const mensaje = message;
     const hora_suceso = last_attempt_time || timestamp || new Date().toISOString();
-    const tipo = alert_type || 'reconnection_failure';
+    const tipo = alert_type || 4;
     const score_confianza = 1.0; // Máxima confianza para este tipo de alerta
-    const descripcion_suceso = `Fallo de reconexión después de ${reconnect_attempts}/${max_attempts} intentos. Stream: ${stream_url}`;
-    const estado = 'false';
+    const descripcion_suceso = `Fallo de reconexión después de ${reconnect_attempts}/${max_attempts} intentos.`;
+
     // 1. Insertar la alerta en la BD con los campos específicos de reconexión
     let result;
     if (descripcion_suceso) {
       result = await pool.query(
         `INSERT INTO alertas 
-         (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, reconnect_attempts, max_reconnect_attempts, stream_url, last_attempt_time, estado_camara) 
+         (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, reconnect_attempts, max_reconnect_attempts, last_attempt_time, estado) 
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
          RETURNING *`,
         [
@@ -167,15 +167,15 @@ router.post('/cam-reconnection-failure/nueva-alerta', async (req, res) => {
           descripcion_suceso,
           reconnect_attempts,
           max_attempts,
-          stream_url,
-          last_attempt_time
+          last_attempt_time,
+          0
         ]
       );
     } else {
       result = await pool.query(
         `INSERT INTO alertas 
-         (id_camara, mensaje, hora_suceso, tipo, score_confianza, reconnect_attempts, max_reconnect_attempts, stream_url, last_attempt_time) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+         (id_camara, mensaje, hora_suceso, tipo, score_confianza, reconnect_attempts, max_reconnect_attempts, last_attempt_time) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
          RETURNING *`,
         [
           id_camara, 
@@ -185,7 +185,6 @@ router.post('/cam-reconnection-failure/nueva-alerta', async (req, res) => {
           score_confianza,
           reconnect_attempts,
           max_attempts,
-          stream_url,
           last_attempt_time
         ]
       );
@@ -194,14 +193,15 @@ router.post('/cam-reconnection-failure/nueva-alerta', async (req, res) => {
     const nuevaAlerta = result.rows[0];
 
     // 2. Actualizar estado
-    result_act = await pool.query( 
+    const result_act = await pool.query( 
       `UPDATE alertas SET estado = $1 WHERE id = $2  
          RETURNING *`,
         [
-          estado, 
+          0, 
           id_camara
         ]
     );
+    const cambioEstado = result_act.rows[0];
 
     // 3. Guardar en Redis y emitir WebSocket
     await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));

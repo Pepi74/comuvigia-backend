@@ -29,7 +29,6 @@ CREATE TABLE alertas (
     estado SMALLINT NOT NULL DEFAULT 0 -- Estado de alerta, 0: "En Observación", 1: "Confirmada", 2: "Falso Positivo"
     reconnect_attempts INTEGER;
     max_reconnect_attempts INTEGER;
-    stream_url TEXT;
     last_attempt_time TIMESTAMP;
 );
 

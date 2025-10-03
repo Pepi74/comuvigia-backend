@@ -607,7 +607,6 @@ class VideoStream:
                 "last_attempt_time": self.last_reconnect_time.isoformat() if self.last_reconnect_time else datetime.now().isoformat(),
                 "timestamp": datetime.now().isoformat(),
                 "status": "disabled",
-                "stream_url": self.link_camara
             }
             
             api_url = "http://backend:3000/api/alerts/cam-reconnection-failure/nueva-alerta"
@@ -762,7 +761,8 @@ class FFmpegSegmenter:
 video_streams = {}
 cameras_data = json.loads(CAMERAS) if isinstance(CAMERAS, str) else CAMERAS
 for camera in cameras_data:
-    cam_id = camera["id"]
+    cam_id = int(camera["id"])
+    # cam_id = camera["id"]
     config = camera
     
     if config["estado_camara"] and config["link_camara"] and config["link_camara_externo"]:
