@@ -1,4 +1,7 @@
 import tarfile
+import threading
+import pika
+
 import re
 import cv2
 import numpy as np
@@ -26,11 +29,14 @@ import subprocess, shlex
 from flask import Flask, Response, jsonify, request
 from video_reconstructor import video_bp, video_reconstructor
 from flask_cors import CORS
+import queue
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": os.environ["FRONTEND_URL"]}})
 app.register_blueprint(video_bp, url_prefix='/')
 start_time = time.time()
+
+
 
 # Configuración
 DEFAULT_OUTPUT_SIZE = (640, 360)
@@ -48,6 +54,8 @@ S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
 S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
 S3_BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
 S3_REGION = "us-east-1"
+
+
 
 # Obtención de cámaras
 url = "http://backend:3000/api/camaras"
@@ -73,6 +81,79 @@ logger.addHandler(fh)
 ch = logging.StreamHandler()
 ch.setFormatter(fmt)
 logger.addHandler(ch)
+
+
+class RabbitPublisher:
+    def __init__(self, prefetch_count=10):
+        # Configuración RabbitMQ
+        self.rabbit_host = os.getenv('RABBIT_HOST', 'rabbitmq')
+        self.rabbit_port = int(os.getenv('RABBIT_PORT', 5672))
+        self.rabbit_user = os.getenv('RABBITMQ_DEFAULT_USER', 'guest')
+        self.rabbit_password = os.getenv('RABBITMQ_DEFAULT_PASS', 'guest')
+        self.exchange = 'frames'
+
+        self._stop = threading.Event()
+        self.connection = None
+        self.channel = None
+        self.prefetch_count = prefetch_count
+
+        self._lock = threading.Lock()
+        self.connect()
+
+    def connect(self):
+        """Conecta a RabbitMQ y declara exchange"""
+        credentials = pika.PlainCredentials(self.rabbit_user, self.rabbit_password)
+        parameters = pika.ConnectionParameters(
+            host=self.rabbit_host,
+            port=self.rabbit_port,
+            credentials=credentials,
+            heartbeat=600,
+            blocked_connection_timeout=300,
+        )
+        while not self._stop.is_set():
+            try:
+                self.connection = pika.BlockingConnection(parameters)
+                self.channel = self.connection.channel()
+                self.channel.exchange_declare(exchange=self.exchange, exchange_type='direct')
+                # Control de prefetch para no saturar al consumidor
+                self.channel.basic_qos(prefetch_count=self.prefetch_count)
+                print("Conectado a RabbitMQ")
+                break
+            except Exception as e:
+                print(f"No se pudo conectar a RabbitMQ, reintentando en 5s: {e}")
+                time.sleep(5)
+
+    def publish_frame(self, camera_id, frame_bytes):
+        """Publica un frame JPEG directamente como mensaje"""
+        if not isinstance(frame_bytes, (bytes, bytearray)):
+            raise TypeError(f"publish_frame requiere bytes, no {type(frame_bytes)}")
+
+        routing_key = f"camera_{camera_id}"
+        with self._lock:
+            try:
+                self.channel.basic_publish(
+                    exchange=self.exchange,
+                    routing_key=routing_key,
+                    body=frame_bytes
+                )
+            except (pika.exceptions.AMQPConnectionError, pika.exceptions.ChannelClosedByBroker) as e:
+                
+                print(f"Conexión perdida al publicar, reconectando...: {e}")
+                self.connect()
+                self.channel.basic_publish(
+                    exchange=self.exchange,
+                    routing_key=routing_key,
+                    body=frame_bytes
+                )
+
+    def stop(self):
+        self._stop.set()
+        with self._lock:
+            if self.connection and not self.connection.is_closed:
+                self.connection.close()
+
+publisher = RabbitPublisher(prefetch_count=10)
+
 
 class S3Client:
     def __init__(self):
@@ -367,6 +448,8 @@ class VideoStream:
         logger.info(f"Stream de cámara {self.camera_id} iniciado")
 
     def update(self):
+        last_publish_time = 0
+        MAX_PUBLISH_FPS = 15  # ajustar según lo que quieras enviar a RabbitMQ
         while self.running:
             try:
                 # Verificar si la cámara está deshabilitada por demasiados intentos fallidos
@@ -409,7 +492,7 @@ class VideoStream:
                     self.reconnect_camera()
                     time.sleep(1)
                     continue
-
+                    
                 # Resetear contador de reconexiones si la captura es exitosa
                 if self.reconnect_attempts > 0:
                     logger.info(f"Cámara {self.camera_id}: Conexión restaurada, resetear contador de reconexiones")
@@ -417,6 +500,15 @@ class VideoStream:
                     self.alert_sent = False
 
                 # Procesar frame exitoso
+                camera_id_int = self.camera_id
+                # 🔹 Control de FPS para publicar
+                current_time = time.time()
+                if current_time - last_publish_time >= 1.0 / MAX_PUBLISH_FPS:
+                    _, jpeg_buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                    jpeg_bytes = jpeg_buffer.tobytes()
+                    publisher.publish_frame(camera_id_int, jpeg_bytes)
+                    last_publish_time = current_time  
+                
                 processed_frame = cv2.resize(frame, DEFAULT_OUTPUT_SIZE)
                 frame_time = time.time()
                 
@@ -760,6 +852,7 @@ class FFmpegSegmenter:
 # Inicializar streams para todas las cámaras
 video_streams = {}
 cameras_data = json.loads(CAMERAS) if isinstance(CAMERAS, str) else CAMERAS
+print(cameras_data)
 for camera in cameras_data:
     cam_id = int(camera["id"])
     # cam_id = camera["id"]
@@ -851,6 +944,9 @@ def save_frames():
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No se proporcionaron datos JSON'}), 400
+        #print(data['frames'])
+        # Campos obligatorios
+        required_fields = ['camera_id', 'frames','fps']
         
         # Verificar campos obligatorios
         required_fields = ['camera_id', 'frames', 'fps']
