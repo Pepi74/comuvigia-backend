@@ -27,6 +27,9 @@ CREATE TABLE alertas (
     clip VARCHAR(100), -- Opcional, referencia a la ubicación del clip o video perteneciente a otra base de datos
     descripcion_suceso TEXT, -- Opcional
     estado SMALLINT NOT NULL DEFAULT 0 -- Estado de alerta, 0: "En Observación", 1: "Confirmada", 2: "Falso Positivo"
+    reconnect_attempts INTEGER;
+    max_reconnect_attempts INTEGER;
+    last_attempt_time TIMESTAMP;
 );
 
 CREATE TABLE usuarios (

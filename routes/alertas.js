@@ -121,6 +121,114 @@ router.post('/nueva-alerta', async (req, res) => {
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
+
+router.post('/cam-reconnection-failure/nueva-alerta', async (req, res) => {
+  try {
+    const alerta = req.body;
+    const { 
+      camera_id, 
+      alert_type, 
+      message, 
+      timestamp, 
+      reconnect_attempts, 
+      max_attempts, 
+      last_attempt_time, 
+      stream_url,
+      status 
+    } = alerta;
+
+    // Validar campos requeridos
+    if (!camera_id || !message) {
+      return res.status(400).json({ error: 'Campos camera_id y message son requeridos' });
+    }
+
+    // Mapear campos a la estructura existente de tu tabla
+    const id_camara = camera_id;
+    const mensaje = message;
+    const hora_suceso = last_attempt_time || timestamp || new Date().toISOString();
+    const tipo = alert_type || 4;
+    const score_confianza = 1.0; // Máxima confianza para este tipo de alerta
+    const descripcion_suceso = `Fallo de reconexión después de ${reconnect_attempts}/${max_attempts} intentos.`;
+
+    // 1. Insertar la alerta en la BD con los campos específicos de reconexión
+    let result;
+    if (descripcion_suceso) {
+      result = await pool.query(
+        `INSERT INTO alertas 
+         (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, reconnect_attempts, max_reconnect_attempts, last_attempt_time, estado) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+         RETURNING *`,
+        [
+          id_camara, 
+          mensaje, 
+          hora_suceso, 
+          tipo, 
+          score_confianza, 
+          descripcion_suceso,
+          reconnect_attempts,
+          max_attempts,
+          last_attempt_time,
+          0
+        ]
+      );
+    } else {
+      result = await pool.query(
+        `INSERT INTO alertas 
+         (id_camara, mensaje, hora_suceso, tipo, score_confianza, reconnect_attempts, max_reconnect_attempts, last_attempt_time) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+         RETURNING *`,
+        [
+          id_camara, 
+          mensaje, 
+          hora_suceso, 
+          tipo, 
+          score_confianza,
+          reconnect_attempts,
+          max_attempts,
+          last_attempt_time
+        ]
+      );
+    }
+
+    const nuevaAlerta = result.rows[0];
+
+    // 2. Actualizar estado
+    const result_act = await pool.query( 
+      `UPDATE alertas SET estado = $1 WHERE id = $2  
+         RETURNING *`,
+        [
+          0, 
+          id_camara
+        ]
+    );
+    const cambioEstado = result_act.rows[0];
+
+    // 3. Guardar en Redis y emitir WebSocket
+    await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
+    await redisClient.set(`alerta:${nuevaAlerta.id}`, JSON.stringify(nuevaAlerta));
+    await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
+    await redisClient.lTrim('alertas', 0, 99);
+
+    // Emitir evento WebSocket
+    io.emit('nueva-alerta', nuevaAlerta);
+
+    // Log del evento
+    console.log(`Alerta de reconexión fallida registrada para cámara ${camera_id}: ${reconnect_attempts}/${max_attempts} intentos`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Alerta de fallo de reconexión registrada exitosamente',
+      alerta: nuevaAlerta
+    });
+
+  } catch (error) {
+    console.error('Error al procesar la alerta de reconexión:', error);
+    res.status(500).json({ 
+      error: 'Error interno del servidor',
+      details: error.message 
+    });
+  }
+});
   
 // --- Enviar alertas no vistas ---
 router.get('/no-vistas', verificarToken, verificarRol([1, 2]), async (_, res) => {
