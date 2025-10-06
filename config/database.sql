@@ -17,6 +17,16 @@ CREATE TABLE camaras (
     zona_interes TEXT DEFAULT ''
 );
 
+CREATE  TABLE reglas(
+    id SERIAL PRIMARY KEY,
+    riesgo VARCHAR(10),
+    tipoAlerta VARCHAR(50), -- SEPARADAS POR COMA
+    horaInicio TIME,
+    horaFin TIME,
+    score INT,
+    sector VARCHAR(100)
+);
+
 CREATE TABLE alertas (
     id SERIAL PRIMARY KEY, -- Puede ser definida como id_alerta
     id_camara INTEGER NOT NULL REFERENCES camaras(id), -- FK a id de tabla camaras
@@ -35,7 +45,7 @@ CREATE TABLE usuarios (
     contrasena TEXT NOT NULL,
     nombre VARCHAR(100) NOT NULL,
     rol SMALLINT NOT NULL DEFAULT 0 -- 0: 'invitado', 1: 'funcionario', 2: 'administrador'
-)
+);
 
 CREATE TABLE tipos_alerta (
     id SERIAL PRIMARY KEY, -- 0: "No especificado", 1: "Merodeo", 2: "Portonazo"...*se puede ir agregando mas si es necesario*
@@ -158,3 +168,9 @@ SELECT pg_catalog.setval('public.alertas_id_seq', 27, true);
 SELECT pg_catalog.setval('public.camaras_id_seq', 6, true);
 SELECT pg_catalog.setval('public.sectores_id_seq', 3, true);
 SELECT pg_catalog.setval('public.tipos_alerta_id_seq', 1, false);
+
+INSERT INTO reglas(riesgo, tipoAlerta, horaInicio, horaFin, score, sector) VALUES
+('bajo', '1', '23:59', '23:59', 100, ''),
+('medio', '2', '23:59', '23:59', 100, ''),
+('alto', '3', '23:59', '23:59', 100, ''),
+('critico', '', '00:00', '23:59', 90, '');
