@@ -692,7 +692,7 @@ class VideoStream:
         try:
             alert_data = {
                 "camera_id": self.camera_id,
-                "alert_type": "reconnection_failure",
+                "alert_type": 4,
                 "message": f"Cámara {self.camera_id} superó el límite de {self.max_reconnect_attempts} intentos de reconexión",
                 "reconnect_attempts": self.reconnect_attempts,
                 "max_attempts": self.max_reconnect_attempts,
@@ -700,8 +700,8 @@ class VideoStream:
                 "timestamp": datetime.now().isoformat(),
                 "status": "disabled",
             }
-            
-            api_url = "http://backend:3000/api/alerts/cam-reconnection-failure/nueva-alerta"
+            logger.info(alert_data)
+            api_url = "http://backend:3000/api/alertas/cam-reconnection-failure/nueva-alerta"
             
             response = requests.post(
                 api_url,
