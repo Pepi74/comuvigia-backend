@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, send_file, jsonify, request
 from botocore.client import Config
 from functools import lru_cache
+import zipfile
 # Logs
 os.makedirs("/logs", exist_ok=True)
 from logging.handlers import RotatingFileHandler
@@ -1279,5 +1280,56 @@ def play_clip():
         
     except Exception as e:
         logger.error(f"Error reproduciendo clip: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+    
+@video_bp.route('/video/download_evidence', methods=['POST'])
+def download_evidence():
+    """Descargar evidencia enviando datos de alerta y camara"""
+    try:
+        data = request.get_json()
+        if not data or 'key' not in data:
+            return jsonify({"error": "Se requiere parámetro 'key' en el body JSON"}), 400
+            
+        key = data['key']
+        nombre_camara = data['nombre_camara']
+        descripcion = data['descripcion']
+        hora_suceso = data['hora_suceso']
+        hora_suceso_fmt = datetime.fromisoformat(hora_suceso.replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M:%S")
+        ubicacion = data['ubicacion']
+        output_format = request.args.get('format', 'mp4')  # Opcional: mantener format como query param
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Reconstruir el video
+        video_path, error_msg = video_reconstructor.reconstruct_clip_play(key, output_format)
+        
+        if error_msg:
+            return jsonify({"error": error_msg}), 404    
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            info_path = os.path.join(tmpdir, "info.txt")
+            zip_path = os.path.join(tmpdir, f"clip_{timestamp}.zip")
+        
+            with open(info_path, "w", encoding="utf-8") as f:
+                    f.write(
+                        f"Descripción: {descripcion}\n"
+                        f"Fecha del suceso: {hora_suceso_fmt}\n"
+                        f"Ubicación: {ubicacion}\n"
+                        f"Cámara: {nombre_camara}\n"
+                    )
+
+            with zipfile.ZipFile(zip_path, "w") as zipf:
+                    zipf.write(video_path, arcname=f"clip.{output_format}")
+                    zipf.write(info_path, arcname="info.txt")
+      
+            # Enviar el archivo para descarga
+            return send_file(
+                    zip_path,
+                    as_attachment=True,
+                    download_name=f"clip_{timestamp}.zip",
+                    mimetype="application/octet-stream"
+                )
+        
+    except Exception as e:
+        logger.error(f"Error descargando video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
     
