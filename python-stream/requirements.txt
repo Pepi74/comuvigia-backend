@@ -7,3 +7,4 @@ botocore
 requests
 flask-cors
 pika
+flask-socketio
