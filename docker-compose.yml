@@ -68,6 +68,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./config:/docker-entrypoint-initdb.d  # ← Esta línea apunta al archivo database.sql
 
   pgadmin:
     image: dpage/pgadmin4
