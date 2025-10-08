@@ -210,8 +210,10 @@ router.post('/cam-reconnection-failure/nueva-alerta', async (req, res) => {
     await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
     await redisClient.lTrim('alertas', 0, 99);
 
-    // Emitir evento WebSocket
+    // Emitir eventos WebSocket
     io.emit('nueva-alerta', nuevaAlerta);
+    const cam = { cameraId: id_camara, estado: false};
+    io.emit('estado-camara', cam)
 
     // Log del evento
     console.log(`Alerta de reconexión fallida registrada para cámara ${camera_id}: ${reconnect_attempts}/${max_attempts} intentos`);
