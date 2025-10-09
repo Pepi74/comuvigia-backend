@@ -93,3 +93,6 @@ router.post('/insertar', verificarToken, verificarRol([2]), async (req, res) => 
     res.status(500).json({ error: 'Error al insertar regla' });
   }
 });
+
+
+export default router;
