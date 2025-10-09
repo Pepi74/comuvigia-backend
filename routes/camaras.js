@@ -19,6 +19,45 @@ router.get('/', async (_, res) => {
   }
 })
 
+// PUT - Actualizar cámara
+router.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const {
+      estado,
+    } = req.body
+
+    // Verificar si la cámara existe
+    const checkResult = await pool.query('SELECT id FROM camaras WHERE id = $1', [id])
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Cámara no encontrada' })
+    }
+
+    const query = `
+      UPDATE camaras SET
+        estado_camara = $1
+      WHERE id = $2
+      RETURNING *
+    `
+
+    const values = [
+      estado,
+      id
+    ]
+
+    const result = await pool.query(query, values)
+    res.json(result.rows[0])
+  } catch (error) {
+    console.error('Error al actualizar cámara:', error)
+    
+    if (error.code === '23503') {
+      return res.status(400).json({ error: 'El sector especificado no existe' })
+    }
+    
+    res.status(500).send('Error en el servidor')
+  }
+})
+
 router.get('/cantidad-alertas', verificarToken, async (_, res) => {
   try {
     const result = await pool.query('SELECT * FROM camaras_con_alertas');

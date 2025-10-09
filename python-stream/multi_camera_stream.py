@@ -1,7 +1,7 @@
 import tarfile
 import threading
 import pika
-
+from flask_socketio import SocketIO, emit
 import re
 import cv2
 import numpy as np
@@ -33,10 +33,9 @@ import queue
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": os.environ["FRONTEND_URL"]}})
+socketio = SocketIO(app, cors_allowed_origins="*")
 app.register_blueprint(video_bp, url_prefix='/')
 start_time = time.time()
-
-
 
 # Configuración
 DEFAULT_OUTPUT_SIZE = (640, 360)
@@ -692,7 +691,7 @@ class VideoStream:
         try:
             alert_data = {
                 "camera_id": self.camera_id,
-                "alert_type": "reconnection_failure",
+                "alert_type": 4,
                 "message": f"Cámara {self.camera_id} superó el límite de {self.max_reconnect_attempts} intentos de reconexión",
                 "reconnect_attempts": self.reconnect_attempts,
                 "max_attempts": self.max_reconnect_attempts,
@@ -700,8 +699,8 @@ class VideoStream:
                 "timestamp": datetime.now().isoformat(),
                 "status": "disabled",
             }
-            
-            api_url = "http://backend:3000/api/alerts/cam-reconnection-failure/nueva-alerta"
+            logger.info(alert_data)
+            api_url = "http://backend:3000/api/alertas/cam-reconnection-failure/nueva-alerta"
             
             response = requests.post(
                 api_url,
@@ -710,7 +709,7 @@ class VideoStream:
                 timeout=10
             )
             
-            if response.status_code == 200:
+            if response.status_code == 200 or response.status_code == 201:
                 logger.info(f"Cámara {self.camera_id}: Alerta enviada exitosamente a la API")
             else:
                 logger.error(f"Cámara {self.camera_id}: Error al enviar alerta. Código: {response.status_code}")
@@ -870,6 +869,15 @@ for camera in cameras_data:
             #video_streams[cam_id] = VideoStream(cam_id, config["link_camara"])
             #logger.warning(f"Cámara {cam_id} creada pero no iniciada debido a error")
 logger.info(f"Cámaras en video_streams: {list(video_streams.keys())}")
+
+# Función auxiliar para actualizar cámaras
+def actualizar_por_id(lista_json, id_buscar, campo, nuevo_valor):
+    """Actualiza un campo específico de una cámara por ID"""
+    for item in lista_json:
+        if item["id"] == id_buscar:
+            item[campo] = nuevo_valor
+            return True  # Indica que se actualizó
+    return False  # Indica que no se encontró
 
 def generate_frames(camera_id):
     try:
@@ -1220,6 +1228,162 @@ def enable_camera(camera_id):
     except Exception as e:
         logger.error(f"Error rehabilitando cámara {camera_id}: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+def manejar_stream_camara(camera_id, nuevo_estado, estado_anterior, camara_config):
+    """
+    Maneja el inicio/detención del stream según el estado de la cámara
+    """
+    try:
+        # Si el estado no cambió, no hacer nada
+        if estado_anterior == nuevo_estado:
+            logger.info(f"Cámara {camera_id}: Estado sin cambios ({nuevo_estado})")
+            return
+        
+        logger.info(f"Cámara {camera_id}: Cambio de estado {estado_anterior} -> {nuevo_estado}")
+        
+        # Detener stream si existe
+        if camera_id in video_streams:
+            stream_actual = video_streams[camera_id]
+            
+            if nuevo_estado in [False, "false", "inactiva", 0]:
+                # 🔴 DETENER stream
+                logger.info(f"Cámara {camera_id}: Deteniendo stream...")
+                stream_actual.running = False
+                stream_actual.disabled = True
+                
+                # Detener componentes
+                if hasattr(stream_actual, 'segmenter'):
+                    stream_actual.segmenter.stop()
+                
+                if hasattr(stream_actual, 'cap') and stream_actual.cap:
+                    stream_actual.cap.release()
+                    stream_actual.cap = None
+                
+                logger.info(f"Cámara {camera_id}: Stream detenido")
+                
+            else:
+                # 🟢 ACTIVAR/REINICIAR stream
+                logger.info(f"Cámara {camera_id}: Activando/reiniciando stream...")
+                
+                # Si el stream ya estaba corriendo pero en mal estado, detenerlo primero
+                if stream_actual.running:
+                    logger.info(f"Cámara {camera_id}: Reiniciando stream existente...")
+                    stream_actual.running = False
+                    
+                    # Detener componentes actuales
+                    if hasattr(stream_actual, 'segmenter'):
+                        stream_actual.segmenter.stop()
+                    
+                    if hasattr(stream_actual, 'cap') and stream_actual.cap:
+                        stream_actual.cap.release()
+                        stream_actual.cap = None
+                    
+                    time.sleep(1)  # Pequeña pausa antes de reiniciar
+                
+                # Actualizar configuración si es necesario
+                stream_actual.link_camara = camara_config.get("link_camara")
+                
+                # Reiniciar stream
+                stream_actual.running = True
+                stream_actual.disabled = False
+                stream_actual.reconnect_attempts = 0
+                stream_actual.alert_sent = False
+                
+                # Reiniciar segmenter con nueva configuración
+                stream_actual.segmenter = FFmpegSegmenter(
+                    camera_id, 
+                    camara_config.get("link_camara"), 
+                    seg_seconds=BATCH_INTERVAL
+                )
+                stream_actual.segmenter.start()
+                stream_actual.preview_source = stream_actual.segmenter.preview_url
+                
+                # Intentar reconexión
+                stream_actual.reconnect_camera()
+                
+                logger.info(f"Cámara {camera_id}: Stream activado/reiniciado")
+        
+        else:
+            # 🆕 CREAR NUEVO stream si no existe
+            if nuevo_estado not in [False, "false", "inactiva", 0]:
+                logger.info(f"Cámara {camera_id}: Creando nuevo stream...")
+                
+                # Verificar que tenga link_camara
+                if not camara_config.get("link_camara"):
+                    logger.error(f"Cámara {camera_id}: No tiene link_camara configurado")
+                    return
+                
+                # Crear nuevo VideoStream
+                video_streams[camera_id] = VideoStream(camera_id, camara_config.get("link_camara"))
+                video_streams[camera_id].start()
+                
+                logger.info(f"Cámara {camera_id}: Nuevo stream creado e iniciado")
+            
+    except Exception as e:
+        logger.error(f"Error manejando stream para cámara {camera_id}: {str(e)}")
+
+@app.route('/camaras/<int:camera_id>/estado', methods=['PUT'])
+def actualizar_estado_camara(camera_id):
+    try:
+        data = request.get_json()
+        nuevo_estado = data.get('estado')
+        
+        camara_encontrada = None
+        for camara in cameras_data:
+            if camara["id"] == camera_id:
+                camara_encontrada = camara
+                break
+        
+        if not camara_encontrada:
+            return jsonify({
+                'success': False,
+                'message': f'Cámara {camera_id} no encontrada'
+            }), 404
+        
+        estado_anterior = camara_encontrada.get("estado_camara")
+
+        # Actualización interna de la cámara
+        actualizar_por_id(cameras_data, camera_id, "estado_camara", nuevo_estado)
+        manejar_stream_camara(camera_id, nuevo_estado, estado_anterior, camara_encontrada)
+        try:
+            camara = {
+                "estado": nuevo_estado,
+            }
+            logger.info(camara)
+            api_url = f"http://backend:3000/api/camaras/{camera_id}"
+            
+            response = requests.put(
+                api_url,
+                json=camara,
+                headers={'Content-Type': 'application/json'},
+                timeout=10
+            )
+            
+            if response.status_code == 200 or response.status_code == 201:
+                logger.info(f"Cámara {camera_id}: Cámara actualizada exitosamente")
+            else:
+                logger.error(f"Cámara {camera_id}: Error al actualizar cámara. Código: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"Cámara {camera_id}: Error al actualizar: {str(e)}")
+        
+        # Emitir a todos los clientes
+        socketio.emit('estado-camara', {
+            'cameraId': camera_id,
+            'estado': nuevo_estado,
+            'ultima_conexion': datetime.utcnow().isoformat() + 'Z'
+        })
+        
+        return jsonify({
+            'success': True,
+            'message': f'Estado de cámara actualizado a {nuevo_estado}'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=FLASK_PORT, threaded=True)

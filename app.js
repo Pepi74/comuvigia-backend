@@ -9,6 +9,7 @@ import alertasRoutes from './routes/alertas.js'
 import tranmisionRoutes from './routes/transmision.js'
 import authRoutes from './routes/auth.js'
 import userRoutes from './routes/usuarios.js'
+import sectoresRoutes from './routes/sectores.js';
 import reglasRoutes from './routes/reglas.js'
 import cookieParser from 'cookie-parser'
 
@@ -41,6 +42,7 @@ app.use('/api/alertas', alertasRoutes)
 app.use('/api/transmision', tranmisionRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/usuarios', userRoutes)
+app.use('/api/sectores', sectoresRoutes);
 app.use('/api/reglas', reglasRoutes)
 
 // WebSocket: manejar conexiones entrantes

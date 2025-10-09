@@ -1,19 +1,20 @@
 CREATE TABLE sectores (
     id SERIAL PRIMARY KEY,
     nombre_sector VARCHAR(100),
-    descripcion TEXT NOT NULL
+    descripcion TEXT NOT NULL,
+    coordinates JSONB
 );
 
 CREATE TABLE camaras (
-    id SERIAL PRIMARY KEY, -- Puede ser definida como id_camara
+    id SERIAL PRIMARY KEY,
     nombre TEXT NOT NULL,
-    posicion DOUBLE PRECISION[] NOT NULL, -- Arreglo con valores latitud y longitud.
+    posicion DOUBLE PRECISION[] NOT NULL,
     direccion TEXT NOT NULL,
     estado_camara BOOLEAN NOT NULL DEFAULT TRUE,
     ultima_conexion TIMESTAMP NOT NULL,
-    link_camara TEXT DEFAULT '', -- Opcional
+    link_camara TEXT DEFAULT '',
     link_camara_externo TEXT DEFAULT '',
-    id_sector SMALLINT REFERENCES sectores(id), -- FK a id de tabla sectores
+    id_sector SMALLINT REFERENCES sectores(id),
     zona_interes TEXT DEFAULT ''
 );
 
@@ -28,18 +29,18 @@ CREATE  TABLE reglas(
 );
 
 CREATE TABLE alertas (
-    id SERIAL PRIMARY KEY, -- Puede ser definida como id_alerta
-    id_camara INTEGER NOT NULL REFERENCES camaras(id), -- FK a id de tabla camaras
+    id SERIAL PRIMARY KEY,
+    id_camara INTEGER NOT NULL REFERENCES camaras(id),
     mensaje TEXT NOT NULL,
     hora_suceso TIMESTAMP NOT NULL,
-    tipo SMALLINT NOT NULL DEFAULT 0, -- Categorización de tipo de alerta, 0: "No especificado", 1: "Merodeo", 2: "Portonazo"...*se puede ir agregando mas si es necesario*
+    tipo SMALLINT NOT NULL DEFAULT 0,
     score_confianza NUMERIC NOT NULL,
-    clip VARCHAR(100), -- Opcional, referencia a la ubicación del clip o video perteneciente a otra base de datos
-    descripcion_suceso TEXT, -- Opcional
-    estado SMALLINT NOT NULL DEFAULT 0 -- Estado de alerta, 0: "En Observación", 1: "Confirmada", 2: "Falso Positivo"
-    reconnect_attempts INTEGER;
-    max_reconnect_attempts INTEGER;
-    last_attempt_time TIMESTAMP;
+    clip VARCHAR(100),
+    descripcion_suceso TEXT,
+    estado SMALLINT NOT NULL DEFAULT 0,
+    reconnect_attempts INTEGER DEFAULT 0,
+    max_reconnect_attempts INTEGER DEFAULT 3,
+    last_attempt_time TIMESTAMP
 );
 
 CREATE TABLE usuarios (
@@ -47,12 +48,12 @@ CREATE TABLE usuarios (
     usuario VARCHAR(50) UNIQUE NOT NULL,
     contrasena TEXT NOT NULL,
     nombre VARCHAR(100) NOT NULL,
-    rol SMALLINT NOT NULL DEFAULT 0 -- 0: 'invitado', 1: 'funcionario', 2: 'administrador'
+    rol SMALLINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE tipos_alerta (
-    id SERIAL PRIMARY KEY, -- 0: "No especificado", 1: "Merodeo", 2: "Portonazo"...*se puede ir agregando mas si es necesario*
-    nombre_tipo VARCHAR(100) ,
+    id SERIAL PRIMARY KEY,
+    nombre_tipo VARCHAR(100),
     descripcion TEXT NOT NULL
 );
 
@@ -123,48 +124,270 @@ END;
 $$;
 
 -- Insertar datos en la tabla sectores
-INSERT INTO public.sectores (id, nombre_sector, descripcion) VALUES
-(1, 'Sector Norte', 'Sector norte de la comuna.'),
-(2, 'Sector Sur', 'Sector sur de la comuna.'),
-(3, 'Sector Centro', 'Sector centro de la comuna.');
+INSERT INTO public.sectores (id, nombre_sector, descripcion, coordinates) VALUES
+(1, 'Sector 1', 'Descripción del Sector 1.', '[
+    [-33.5104284, -70.6115323],
+    [-33.5261571, -70.6097246],
+    [-33.5259878, -70.6066996],
+    [-33.5286804, -70.6029879],
+    [-33.5281327, -70.5877862],
+    [-33.5227191, -70.5899227],
+    [-33.5224615, -70.5789122],
+    [-33.5190845, -70.5810952],
+    [-33.5106144, -70.5888933],
+    [-33.5098522, -70.5906195],
+    [-33.5084694, -70.6132972],
+    [-33.5104284, -70.6115323]
+]'::jsonb),
+(2, 'Sector 2', 'Descripción del Sector 2.', '[
+    [-33.5168933, -70.5583213],
+    [-33.5160482, -70.5591322],
+    [-33.5113533, -70.5605823],
+    [-33.5112102, -70.5644447],
+    [-33.5117594, -70.5660124],
+    [-33.5101368, -70.5876869],
+    [-33.5106144, -70.5888933],
+    [-33.5190845, -70.5810952],
+    [-33.5224615, -70.5789122],
+    [-33.5272522, -70.5768461],
+    [-33.5262708, -70.5733565],
+    [-33.5273361, -70.5728563],
+    [-33.5273322, -70.5687867],
+    [-33.525825,  -70.5561342],
+    [-33.5240734, -70.5565387],
+    [-33.5215346, -70.5567689],
+    [-33.518604,  -70.5582591],
+    [-33.5168933, -70.5583213]
+]'::jsonb),
+(3, 'Sector 3', 'Descripción del Sector 3.', '[
+    [-33.5149213, -70.540625],
+    [-33.5124759, -70.5418328],
+    [-33.5123944, -70.542096],
+    [-33.5113533, -70.5605823],
+    [-33.5160482, -70.5591322],
+    [-33.5168933, -70.5583213],
+    [-33.518604,   -70.5582591],
+    [-33.5215346, -70.5567689],
+    [-33.5240734, -70.5565387],
+    [-33.525825,   -70.5561342],
+    [-33.5264163, -70.5559086],
+    [-33.5296737, -70.5555532],
+    [-33.5290519, -70.5508387],
+    [-33.5296461, -70.5391721],
+    [-33.5269008, -70.5389861],
+    [-33.5261294, -70.5442467],
+    [-33.5205091, -70.5433256],
+    [-33.5149213, -70.540625]
+]'::jsonb),
+(4, 'Sector 4', 'Descripción del Sector 4.', '[
+    [-33.5124759, -70.5418328],
+    [-33.5149213, -70.540625],
+    [-33.5205091, -70.5433256],
+    [-33.5261294, -70.5442467],
+    [-33.526239,   -70.5434064],
+    [-33.5269008, -70.5389861],
+    [-33.528779,   -70.5221758],
+    [-33.5283141, -70.5202383],
+    [-33.5263643, -70.5198275],
+    [-33.527536,   -70.5097087],
+    [-33.5250392, -70.5101058],
+    [-33.5236275, -70.5112543],
+    [-33.5227359, -70.5231639],
+    [-33.5210245, -70.5252674],
+    [-33.5191674, -70.5228857],
+    [-33.5181315, -70.5232829],
+    [-33.5156815, -70.5211211],
+    [-33.504771,   -70.5194609],
+    [-33.5061539, -70.522093],
+    [-33.5064597, -70.5224971],
+    [-33.5080551, -70.5242278],
+    [-33.5083029, -70.5246315],
+    [-33.508251,   -70.5264316],
+    [-33.5084262, -70.5277517],
+    [-33.508705,   -70.5288254],
+    [-33.5090658, -70.5298141],
+    [-33.5092061, -70.5305042],
+    [-33.5094508, -70.531498],
+    [-33.5097077, -70.5321124],
+    [-33.5108387, -70.5357338],
+    [-33.5112317, -70.5371503],
+    [-33.5114636, -70.5377515],
+    [-33.5120873, -70.5389331],
+    [-33.5124759, -70.5418328]
+]'::jsonb),
+(5, 'Sector 5', 'Descripción del Sector 5.', '[
+    [-33.5286804, -70.6029879],
+    [-33.5259878, -70.6066996],
+    [-33.5261571, -70.6097246],
+    [-33.537821,  -70.6102302],
+    [-33.5391824, -70.6035255],
+    [-33.5395758, -70.5911068],
+    [-33.5354619, -70.5927646],
+    [-33.5360619, -70.584835],
+    [-33.5281327, -70.5877862],
+    [-33.5286804, -70.6029879]
+]'::jsonb),
+(6, 'Sector 6', 'Descripción del Sector 6.', '[
+    [-33.5227191, -70.5899227],
+    [-33.5281327, -70.5877862],
+    [-33.5360619, -70.584835],
+    [-33.5355977, -70.5735912],
+    [-33.5397292, -70.5718317],
+    [-33.5399347, -70.561167],
+    [-33.5392658, -70.5565162],
+    [-33.5361257, -70.5570285],
+    [-33.5357757, -70.5546226],
+    [-33.5323483, -70.5550141],
+    [-33.5296737, -70.5555532],
+    [-33.5264163, -70.5559086],
+    [-33.525825,  -70.5561342],
+    [-33.5273322, -70.5687867],
+    [-33.5273361, -70.5728563],
+    [-33.5262708, -70.5733565],
+    [-33.5272522, -70.5768461],
+    [-33.5224615, -70.5789122],
+    [-33.5227191, -70.5899227]
+]'::jsonb),
+(7, 'Sector 7', 'Descripción del Sector 7.', '[
+    [-33.537821,  -70.6102302],
+    [-33.5466471, -70.6105586],
+    [-33.5467651, -70.603617],
+    [-33.5470424, -70.5877006],
+    [-33.5472878, -70.579111],
+    [-33.5453066, -70.5793846],
+    [-33.5395899, -70.5834124],
+    [-33.5360619, -70.584835],
+    [-33.5354619, -70.5927646],
+    [-33.5395758, -70.5911068],
+    [-33.5391824, -70.6035255],
+    [-33.537821,  -70.6102302]
+]'::jsonb),
+(8, 'Sector 8', 'Descripción del Sector 8.', '[
+    [-33.5360619, -70.584835],
+    [-33.5395899, -70.5834124],
+    [-33.5453066, -70.5793846],
+    [-33.5472878, -70.579111],
+    [-33.5474251, -70.5684186],
+    [-33.5478621, -70.5541638],
+    [-33.5469326, -70.5532432],
+    [-33.5459313, -70.5510354],
+    [-33.5410673, -70.5527997],
+    [-33.5400669, -70.5528953],
+    [-33.5357757, -70.5546226],
+    [-33.5361257, -70.5570285],
+    [-33.5392658, -70.5565162],
+    [-33.5393934, -70.5578948],
+    [-33.5399347, -70.561167],
+    [-33.5397292, -70.5718317],
+    [-33.5355977, -70.5735912],
+    [-33.5360619, -70.584835]
+]'::jsonb),
+(9, 'Sector 9', 'Descripción del Sector 9.', '[
+    [-33.5296461, -70.5391721],
+    [-33.5290519, -70.5508387],
+    [-33.5296715, -70.5554942],
+    [-33.5302351, -70.555422],
+    [-33.5323483, -70.5550141],
+    [-33.5357757, -70.5546226],
+    [-33.5400669, -70.5528953],
+    [-33.5410673, -70.5527997],
+    [-33.5459313, -70.5510354],
+    [-33.5469326, -70.5532432],
+    [-33.5478621, -70.5541638],
+    [-33.5478965, -70.5500213],
+    [-33.5489902, -70.5488478],
+    [-33.5503418, -70.548261],
+    [-33.5508566, -70.5471523],
+    [-33.5519009, -70.5468554],
+    [-33.5527091, -70.5458915],
+    [-33.5506859, -70.5436714],
+    [-33.5500218, -70.5439405],
+    [-33.5501804, -70.5425788],
+    [-33.5487652, -70.5413029],
+    [-33.54561,   -70.5399817],
+    [-33.5385843, -70.5351942],
+    [-33.5351145, -70.5349367],
+    [-33.5331518, -70.5371831],
+    [-33.5329997, -70.5394652],
+    [-33.5296461, -70.5391721]
+]'::jsonb),
+(10, 'Sector 10', 'Descripción del Sector 10.', '[
+    [-33.5700324, -70.6114668],
+    [-33.5673316, -70.5992203],
+    [-33.567772,   -70.5980597],
+    [-33.5661706, -70.5981643],
+    [-33.5654275, -70.598462],
+    [-33.5638696, -70.5985426],
+    [-33.5634001, -70.5993044],
+    [-33.5613884, -70.6004846],
+    [-33.5577227, -70.6010426],
+    [-33.5467651, -70.603617],
+    [-33.5464833, -70.6148595],
+    [-33.5618511, -70.6104441],
+    [-33.5621679, -70.6125278],
+    [-33.5700324, -70.6114668]
+]'::jsonb),
+(11, 'Sector 11', 'Descripción del Sector 11.', '[
+    [-33.5467651, -70.603617],
+    [-33.5577227, -70.6010426],
+    [-33.5613884, -70.6004846],
+    [-33.5634001, -70.5993044],
+    [-33.5638696, -70.5985426],
+    [-33.5654275, -70.598462],
+    [-33.5661706, -70.5981643],
+    [-33.567772,   -70.5980597],
+    [-33.5698966, -70.5922174],
+    [-33.5688231, -70.583927],
+    [-33.565511,   -70.5845921],
+    [-33.5470424, -70.5877006],
+    [-33.5467651, -70.603617]
+]'::jsonb),
+(12, 'Sector 12', 'Descripción del Sector 12.', '[
+    [-33.5470424, -70.5877006],
+    [-33.565511,   -70.5845921],
+    [-33.5608249, -70.557276],
+    [-33.5474251, -70.5684186],
+    [-33.5472878, -70.579111],
+    [-33.5470424, -70.5877006]
+]'::jsonb);
 
 -- Insertar datos en la tabla camaras
 INSERT INTO public.camaras ( nombre, posicion, direccion, estado_camara, ultima_conexion, link_camara, id_sector, link_camara_externo) VALUES
-('Cámara Plaza', '{-33.52,-70.603}', 'Doctor Luis Calvo Mackenna 1361', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_web', 3, 'http://localhost:5000/video_feed/1'),
-('Cámara Sur', '{-33.525,-70.6}', 'El Blanco 178', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp', 2, 'http://localhost:5000/video_feed/2'),
-('Cámara Centro', '{-33.511,-70.59}', 'Avda Departamental 10450', false, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp2', 3, 'http://localhost:5000/video_feed/3'),
-('Cámara Merodeo', '{-33.51, -70.603}', 'Nva Uno 6476', true, '2024-06-09 19:30:00', '/loitering.mp4', 1, ''),
-('Camára Asalto a Hogar', '{-33.53, -70.603}', 'Yungay 645', true, '2024-06-09 19:30:00', '/burglary.mp4', 1, ''),
-('Cámara Portonazo', '{-33.52, -70.61}', 'Atahualpa 6892', true, '2024-06-09 19:30:00', '/portonazo.mp4', 2, '');
+('Cámara Plaza', '{-33.5125, -70.60686}', 'Doctor Luis Calvo Mackenna 1361', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_web', 1, 'http://localhost:5000/video_feed/1'),
+('Cámara Sur', '{-33.51794, -70.59475}', 'El Blanco 178', true, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp', 1, 'http://localhost:5000/video_feed/2'),
+('Cámara Centro', '{-33.51989, -70.57076}', 'Avda Departamental 10450', false, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp2', 2, 'http://localhost:5000/video_feed/3'),
+('Cámara Merodeo', '{-33.53235, -70.60089}', 'Nva Uno 6476', true, '2024-06-09 19:30:00', '/loitering.mp4', 5, ''),
+('Camára Asalto a Hogar', '{-33.5277, -70.57909}', 'Yungay 645', true, '2024-06-09 19:30:00', '/burglary.mp4', 6, ''),
+('Cámara Portonazo', '{-33.53987, -70.57537}', 'Atahualpa 6892', true, '2024-06-09 19:30:00', '/portonazo.mp4', 8, '');
 
 -- Insertar datos en la tabla alertas
 INSERT INTO public.alertas (id, id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso, estado, tipo, clip) VALUES
-(2, 2, 'Merodeo detectado en Calle 1', '2025-06-18 16:39:00', 0.85, 'Persona merodeando en la casa 645', 1, 1, NULL),
-(3, 1, 'Merodeo', '2025-08-10 21:41:34.128106', 0.9279417991638184, 'a woman is seen in this surveillance image', 1, 1, NULL),
-(4, 1, 'Merodeo', '2025-08-10 21:41:49.365153', 0.9386122822761536, 'a man is seen in this surveillance image', 1, 1, NULL),
-(5, 1, 'Merodeo', '2025-08-10 21:50:05.289628', 0.9279417991638184, 'a woman is seen in this surveillance image', 1, 1, NULL),
-(6, 1, 'Merodeo', '2025-08-10 21:50:21.728442', 0.9386122822761536, 'a man is seen in this surveillance image', 1, 1, NULL),
-(7, 1, 'Merodeo', '2025-08-10 21:50:31.309801', 0.9300715923309326, 'a man is seen in this surveillance image', 1, 1, NULL),
+(2, 5, 'Merodeo detectado en Calle 1', '2025-06-18 16:39:00', 0.85, 'Persona merodeando en la casa 645', 1, 1, NULL),
+(3, 4, 'Merodeo', '2025-08-10 21:41:34.128106', 0.9279417991638184, 'a woman is seen in this surveillance image', 1, 1, NULL),
+(4, 4, 'Merodeo', '2025-08-10 21:41:49.365153', 0.9386122822761536, 'a man is seen in this surveillance image', 1, 1, NULL),
+(5, 3, 'Merodeo', '2025-08-10 21:50:05.289628', 0.9279417991638184, 'a woman is seen in this surveillance image', 1, 1, NULL),
+(6, 3, 'Merodeo', '2025-08-10 21:50:21.728442', 0.9386122822761536, 'a man is seen in this surveillance image', 1, 1, NULL),
+(7, 3, 'Merodeo', '2025-08-10 21:50:31.309801', 0.9300715923309326, 'a man is seen in this surveillance image', 1, 1, NULL),
 (8, 1, 'Merodeo', '2025-08-10 22:05:32.867594', 0.9279417991638184, 'a woman is seen in this surveillance image', 1, 1, NULL),
 (9, 1, 'Merodeo', '2025-08-10 22:17:42.564887', 0.9279417991638184, 'a woman is seen in this surveillance image', 1, 1, NULL),
 (10, 1, 'Merodeo', '2025-08-10 22:18:46.271335', 0.9329694509506226, 'a woman is seen in this surveillance image', 1, 1, NULL),
 (11, 3, 'Merodeo', '2025-08-10 22:25:38.354863', 0.93, 'a woman is seen in this surveillance image', 2, 1, NULL),
 (12, 3, 'Merodeo', '2025-08-11 16:17:38.460177', 0.93, '[Alerta merodeo] 2025-08-11 12:17:27 | Activar protocolo: notificar a operador, enfocar cámara, registrar evidencia en enviar patrulla cercana.', 0, 1, NULL),
 (13, 3, 'Merodeo', '2025-08-11 16:29:50.976066', 0.93, '[Alerta merodeo] 2025-08-11 12:29:39 | Activar protocolo: notificar a operador, enfocar cámara, registrar evidencia en enviar patrulla cercana.', 0, 1, NULL),
-(14, 1, 'Merodeo', '2025-08-11 16:34:37.73551', 0.93, '[Alerta merodeo] 2025-08-11 12:34:27 |  Activar protocolo: notificar a operador, enfocar cámara, registrar evidencia en enviar patrulla cercana.', 0, 1, NULL),
-(15, 1, 'Merodeo', '2025-08-11 16:46:24.940547', 0.93, '[Alerta merodeo] 2025-08-11 12:45:56 | Continuar observación pasiva en registro.', 0, 1, NULL),
+(14, 5, 'Merodeo', '2025-08-11 16:34:37.73551', 0.93, '[Alerta merodeo] 2025-08-11 12:34:27 |  Activar protocolo: notificar a operador, enfocar cámara, registrar evidencia en enviar patrulla cercana.', 0, 1, NULL),
+(15, 5, 'Merodeo', '2025-08-11 16:46:24.940547', 0.93, '[Alerta merodeo] 2025-08-11 12:45:56 | Continuar observación pasiva en registro.', 0, 1, NULL),
 (16, 1, 'Merodeo', '2025-08-12 21:50:21.635222', 0.93, '[Alerta merodeo] sin datos (timeout del analizador)', 0, 1, NULL),
 (17, 1, 'Merodeo', '2025-08-12 23:22:04.24088', 0.93, '[Alerta merodeo] sin datos (timeout del analizador)', 1, 1, NULL),
 (18, 1, 'Merodeo', '2025-08-12 23:27:12.847831', 0.93, '[Alerta merodeo] 2025-08-12 19:26:59 | Continuar observación pasiva en registro.', 1, 1, NULL),
-(19, 1, 'Merodeo', '2025-08-12 23:38:06.396645', 0.93, '[Descripción] 2025-08-12 19:37:12 | Ropa: blusa blanca en pantalones negros, Cabello: largo en oscuro.', 2, 1, NULL),
-(20, 1, 'Merodeo', '2025-08-12 23:44:44.747405', 0.93, 'La persona está vestida con una camiseta blanca, pantalones negros en zapatillas de deporte. No se observan accesorios visibles como gorra, capucha, mochila, guantes o gafas. El cabello', 1, 1, NULL),
-(21, 1, 'Merodeo', '2025-08-13 00:21:00.251535', 0.93, 'No se observan detalles específicos sobre la ropa o accesorio. El cabello es oscuro en largo.', 1, 1, NULL),
+(19, 5, 'Merodeo', '2025-08-12 23:38:06.396645', 0.93, '[Descripción] 2025-08-12 19:37:12 | Ropa: blusa blanca en pantalones negros, Cabello: largo en oscuro.', 2, 1, NULL),
+(20, 5, 'Merodeo', '2025-08-12 23:44:44.747405', 0.93, 'La persona está vestida con una camiseta blanca, pantalones negros en zapatillas de deporte. No se observan accesorios visibles como gorra, capucha, mochila, guantes o gafas. El cabello', 1, 1, NULL),
+(21, 3, 'Merodeo', '2025-08-13 00:21:00.251535', 0.93, 'No se observan detalles específicos sobre la ropa o accesorio. El cabello es oscuro en largo.', 1, 1, NULL),
 (22, 2, 'Merodeo', '2025-08-14 04:18:21.907023', 0.93, 'No se observan ropas superiores o accesorio distintivo. El cabello es oscuro en corto. La persona lleva una camiseta blanca, pantalones negros en zapatillas.', 0, 1, NULL),
 (23, 2, 'Merodeo', '2025-08-14 04:35:33.279086', 0.93, 'Descripción no disponible (error de procesamiento).', 0, 1, NULL),
-(24, 1, 'Portonazo', '2025-08-14 05:20:58.495481', 0.89, '[Alerta merodeo] sin datos (error del analizador)', 1, 2, NULL),
+(24, 3, 'Portonazo', '2025-08-14 05:20:58.495481', 0.89, '[Alerta merodeo] sin datos (error del analizador)', 1, 2, NULL),
 (25, 2, 'Portonazo', '2025-08-14 05:26:41.290484', 0.93, '[Alerta merodeo] sin datos (error del analizador)', 0, 2, NULL),
-(26, 1, 'Asalto hogar', '2025-08-14 05:32:57.458472', 0.75, 'La persona lleva una camiseta blanca en pantalones negros. No se observa anomalía.', 1, 3, NULL),
-(27, 1, 'Asalto hogar', '2025-08-14 05:34:40.703153', 0.65, 'Niño con camiseta blanca en pantalón negro, lleva una mochila roja. Cabeza negra corta, no se observa barba. Se mueve con normalidad, observando el camino.', 1, 3, NULL);
+(26, 6, 'Asalto hogar', '2025-08-14 05:32:57.458472', 0.75, 'La persona lleva una camiseta blanca en pantalones negros. No se observa anomalía.', 1, 3, NULL),
+(27, 6, 'Asalto hogar', '2025-08-14 05:34:40.703153', 0.65, 'Niño con camiseta blanca en pantalón negro, lleva una mochila roja. Cabeza negra corta, no se observa barba. Se mueve con normalidad, observando el camino.', 1, 3, NULL);
 
 -- Actualizar las secuencias
 SELECT pg_catalog.setval('public.alertas_id_seq', 27, true);

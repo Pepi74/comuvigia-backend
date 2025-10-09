@@ -193,15 +193,16 @@ router.post('/cam-reconnection-failure/nueva-alerta', async (req, res) => {
     const nuevaAlerta = result.rows[0];
 
     // 2. Actualizar estado
-    const result_act = await pool.query( 
-      `UPDATE alertas SET estado = $1 WHERE id = $2  
-         RETURNING *`,
-        [
-          0, 
-          id_camara
-        ]
-    );
-    const cambioEstado = result_act.rows[0];
+    try {
+      // Ejemplo: si tienes una tabla 'camaras'
+      await pool.query(
+        `UPDATE camaras SET estado_camara = $1 WHERE id = $2`,
+        [0, id_camara]
+      );
+    } catch (updateError) {
+      console.warn('No se pudo actualizar estado de cámara:', updateError.message);
+      // Continuar aunque falle esta parte
+    }
 
     // 3. Guardar en Redis y emitir WebSocket
     await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
@@ -209,8 +210,10 @@ router.post('/cam-reconnection-failure/nueva-alerta', async (req, res) => {
     await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
     await redisClient.lTrim('alertas', 0, 99);
 
-    // Emitir evento WebSocket
+    // Emitir eventos WebSocket
     io.emit('nueva-alerta', nuevaAlerta);
+    const cam = { cameraId: id_camara, estado: false};
+    io.emit('estado-camara', cam)
 
     // Log del evento
     console.log(`Alerta de reconexión fallida registrada para cámara ${camera_id}: ${reconnect_attempts}/${max_attempts} intentos`);

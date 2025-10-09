@@ -18,7 +18,7 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y ffmpeg
+RUN apt-get update && apt-get install -y ffmpeg gcc g++ python3-dev && rm -rf /var/lib/apt/lists/*
 
 COPY multi_camera_stream.py .
 COPY video_reconstructor.py .
