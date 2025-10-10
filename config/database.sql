@@ -40,7 +40,8 @@ CREATE TABLE alertas (
     estado SMALLINT NOT NULL DEFAULT 0,
     reconnect_attempts INTEGER DEFAULT 0,
     max_reconnect_attempts INTEGER DEFAULT 3,
-    last_attempt_time TIMESTAMP
+    last_attempt_time TIMESTAMP,
+    sector INT
 );
 
 CREATE TABLE usuarios (
