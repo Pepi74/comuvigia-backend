@@ -15,7 +15,7 @@ CREATE TABLE camaras (
     link_camara TEXT DEFAULT '',
     link_camara_externo TEXT DEFAULT '',
     id_sector SMALLINT REFERENCES sectores(id),
-    zona_interes TEXT DEFAULT ''
+    zona_interes JSONB
 );
 
 CREATE  TABLE reglas(
