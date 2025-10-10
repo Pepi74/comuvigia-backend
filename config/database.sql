@@ -57,6 +57,33 @@ CREATE TABLE tipos_alerta (
     descripcion TEXT NOT NULL
 );
 
+-- Agrega el campo sector a las alertas
+CREATE OR REPLACE FUNCTION sincronizar_sector_alerta()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Solo actúa si se inserta o cambia el id_camara
+    IF (TG_OP = 'INSERT') OR (TG_OP = 'UPDATE' AND NEW.id_camara IS DISTINCT FROM OLD.id_camara) THEN
+        -- Obtener el id_sector de la cámara relacionada
+        SELECT id_sector
+        INTO NEW.sector
+        FROM camaras
+        WHERE id = NEW.id_camara;
+        -- En caso de que no exista la cámara, puedes decidir qué hacer:
+        IF NEW.sector IS NULL THEN
+            RAISE NOTICE 'No se encontró cámara con id %, no se actualizó sector.', NEW.id_camara;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trigger_sincronizar_sector ON alertas;
+CREATE TRIGGER trigger_sincronizar_sector
+BEFORE INSERT OR UPDATE
+ON alertas
+FOR EACH ROW
+EXECUTE FUNCTION sincronizar_sector_alerta();
+
+
 -- Vista de tabla camara con el total de alertas de cada camara
 CREATE OR REPLACE VIEW camaras_con_alertas AS
 SELECT

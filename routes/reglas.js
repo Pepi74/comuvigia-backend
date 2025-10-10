@@ -9,7 +9,7 @@ dotenv.config()
 const router = Router()
 
 // Endpoint para registrar un usuario en BD con contraseña hasheada
-router.get('/obtener', verificarToken, verificarRol([2]), async(req, res) => {
+router.get('/obtener', verificarToken, verificarRol([1, 2]), async(req, res) => {
   try {
     const result = await pool.query('SELECT * FROM reglas');
     const reglas = result.rows.map(regla => ({
@@ -29,7 +29,7 @@ router.get('/obtener', verificarToken, verificarRol([2]), async(req, res) => {
   }
 );
 
-router.post('/actualizar', verificarToken, verificarRol([2]), async (req, res) => {
+router.post('/actualizar', verificarToken, verificarRol([1, 2]), async (req, res) => {
   try {
     const reglas = req.body; // arreglo de objetos RulesType con id incluido
 
@@ -66,7 +66,7 @@ router.post('/actualizar', verificarToken, verificarRol([2]), async (req, res) =
   }
 });
 
-router.post('/insertar', verificarToken, verificarRol([2]), async (req, res) => {
+router.post('/insertar', verificarToken, verificarRol([1,2]), async (req, res) => {
   try {
     const { riesgo, tipoAlerta, horaInicio, horaFin, score, sector } = req.body;
 
@@ -93,3 +93,15 @@ router.post('/insertar', verificarToken, verificarRol([2]), async (req, res) => 
     res.status(500).json({ error: 'Error al insertar regla' });
   }
 });
+
+router.get('/sectores', verificarToken, verificarRol([1, 2]), async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, nombre_sector FROM sectores;');
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error al obtener sectores:', err);
+    res.status(500).json({ error: 'Error al obtener sectores' });
+  }
+});
+
+export default router;
