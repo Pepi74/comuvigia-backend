@@ -6,8 +6,8 @@ import { verificarRol } from '../middlewares/roles.js';
 const router = Router();
 
 // GET sectores con conteo de alertas en un rango de fechas
-// LE FALTAN LAS VERIFICACIONES, CAMBIAR LINEA 9 POR: router.get('/', verificarToken, verificarRol([2]), async (req, res) => {
-router.get('/', async (req, res) => {
+// Si no les funciona borren las verificaciones
+router.get('/', verificarToken, verificarRol([1, 2]), async (req, res) => {
   try {
     const { fecha_inicio, fecha_fin } = req.query;
 
@@ -43,7 +43,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET sectores con todas las alertas existentes
-router.get('/alltime', async (_, res) => {
+router.get('/alltime', verificarToken, verificarRol([1, 2]), async (_, res) => {
   try {
     const result = await pool.query(`
       SELECT s.id, s.nombre_sector, s.descripcion, s.coordinates,
