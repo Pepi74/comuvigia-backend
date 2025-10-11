@@ -3,6 +3,7 @@ import { Router } from 'express'
 import pool from '../config/db.js'
 import { verificarToken } from '../middlewares/auth.js'
 import { verificarRol } from '../middlewares/roles.js'
+import { io, controlCamera, updateCameraStatus } from '../app.js';
 
 const router = Router()
 
@@ -19,13 +20,11 @@ router.get('/', async (_, res) => {
   }
 })
 
-// PUT - Actualizar cámara
+// PUT - Actualizar estado cámara
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params
-    const {
-      estado,
-    } = req.body
+    const { estado } = req.body
 
     // Verificar si la cámara existe
     const checkResult = await pool.query('SELECT id FROM camaras WHERE id = $1', [id])
@@ -39,13 +38,22 @@ router.put('/:id', async (req, res) => {
       WHERE id = $2
       RETURNING *
     `
-
     const values = [
       estado,
       id
     ]
 
     const result = await pool.query(query, values)
+    
+    io.emit('estado-camara', {
+      cameraId: parseInt(id),
+      estado: estado,
+      ultima_conexion: new Date().toISOString()
+    });
+    
+     // Enviar comando al servicio de streaming
+    controlCamera(id, estado ? 'restart' : 'stop');
+
     res.json(result.rows[0])
   } catch (error) {
     console.error('Error al actualizar cámara:', error)
