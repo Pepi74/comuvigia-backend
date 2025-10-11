@@ -61,7 +61,12 @@ async function obtenerDatosParaPDF(fechaInicio, fechaFin) {
 
     client = await pool.connect();
     
-    const query = `SELECT * FROM reporte_alertas_por_periodo($1, $2, $3)`;
+    const query = `
+      SELECT r.*, s.coordinates
+      FROM reporte_alertas_por_periodo($1, $2, $3) r
+      JOIN sectores s ON r.id_sector = s.id
+    `;
+
     const result = await client.query(query, [fechaInicioStr, fechaFinStr, grupo]);
 
     if (result.rows.length === 0) {
@@ -122,10 +127,11 @@ async function obtenerDatosParaPDF(fechaInicio, fechaFin) {
           merodeos: 0,
           portonazos: 0,
           asaltos_hogar: 0,
-          no_especificados: 0
+          no_especificados: 0,
+          coordinates: row.coordinates || null
         };
       }
-
+      sectores[sectorId].coordinates = row.coordinates || null;
       sectores[sectorId].total_alertas += parseInt(row.total_alertas) || 0;
       sectores[sectorId].alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
       sectores[sectorId].falsos_positivos += parseInt(row.falsos_positivos) || 0;
@@ -200,7 +206,8 @@ async function obtenerDatosParaPDF(fechaInicio, fechaFin) {
       estadisticas_totales: totales,
       sectores: Object.values(sectores),
       sectores_criticos: sectoresCriticos,
-      horarios_alertas: horarios
+      horarios_alertas: horarios,
+      registros_crudos: result.rows // para análisis temporal
     };
     
   } catch (error) {
@@ -229,13 +236,12 @@ async function generarGraficoComoImagen(tipo, datos, ancho = 1000, alto = 600) {
     // 📊 Tipos de alertas
     case 'tipos_alertas':
       config = {
-        type: 'pie',
+        type: 'bar',
         data: {
           labels: [
             'Merodeos',
             'Portonazos',
             'Asaltos Hogar',
-            'Falsos Positivos',
             'No Especificados'
           ],
           datasets: [{
@@ -370,39 +376,192 @@ async function generarGraficoComoImagen(tipo, datos, ancho = 1000, alto = 600) {
       break;
     // Alertas por franja horaria
       case 'horarios_alertas':
-      const franjas = ['madrugada', 'manana', 'tarde', 'noche'];
-      const tipos = ['merodeos', 'portonazos', 'asaltos_hogar', 'falsos_positivos', 'no_especificados'];
+        const franjas = ['madrugada', 'manana', 'tarde', 'noche'];
+        const tipos = ['merodeos', 'portonazos', 'asaltos_hogar', 'no_especificados'];
 
-      const datasets = tipos.map((tipo, i) => ({
-        label: tipo.charAt(0).toUpperCase() + tipo.slice(1).replace('_', ' '),
-        data: franjas.map(f => datos.horarios_alertas[f][tipo]),
-        backgroundColor: coloresGraficos.primario[i % coloresGraficos.primario.length],
-        borderRadius: 5
-      }));
+        const datasets = tipos.map((tipo, i) => ({
+          label: tipo.charAt(0).toUpperCase() + tipo.slice(1).replace('_', ' '),
+          data: franjas.map(f => datos.horarios_alertas[f][tipo]),
+          backgroundColor: coloresGraficos.primario[i % coloresGraficos.primario.length],
+          borderRadius: 5
+        }));
 
-      config = {
-        type: 'bar',
-        data: { labels: ['Madrugada', 'Mañana', 'Tarde', 'Noche'], datasets },
-        options: {
-          responsive: false,
-          plugins: {
-            title: {
-              display: true,
-              text: 'Alertas por Franja Horaria y Tipo',
-              font: { size: 28, weight: 'bold' }
+        config = {
+          type: 'bar',
+          data: { labels: ['Madrugada', 'Mañana', 'Tarde', 'Noche'], datasets },
+          options: {
+            responsive: false,
+            plugins: {
+              title: {
+                display: true,
+                text: 'Alertas por Franja Horaria y Tipo',
+                font: { size: 28, weight: 'bold' }
+              },
+              legend: {
+                position: 'bottom',
+                labels: { font: { size: 16 } }
+              }
             },
-            legend: {
-              position: 'bottom',
-              labels: { font: { size: 16 } }
+            scales: {
+              x: { stacked: true, ticks: { font: { size: 16 } } },
+              y: { stacked: true, beginAtZero: true, ticks: { font: { size: 16 } } }
             }
-          },
-          scales: {
-            x: { stacked: true, ticks: { font: { size: 16 } } },
-            y: { stacked: true, beginAtZero: true, ticks: { font: { size: 16 } } }
           }
-        }
-      };
-      break;
+        };
+        break;
+
+      // 📈 Tendencia temporal (alertas por día)
+      case 'tendencia_temporal':
+        // Agrupamos las alertas por día
+        const conteoPorDia = {};
+        datos.registros_crudos?.forEach(row => {
+          const fecha = new Date(row.periodo).toISOString().split('T')[0]; // yyyy-mm-dd
+          conteoPorDia[fecha] = (conteoPorDia[fecha] || 0) + (parseInt(row.total_alertas) || 0);
+        });
+
+        const fechasOrdenadas = Object.keys(conteoPorDia).sort();
+        const valores = fechasOrdenadas.map(f => conteoPorDia[f]);
+
+        config = {
+          type: 'line',
+          data: {
+            labels: fechasOrdenadas.map(f => {
+              const fecha = new Date(f);
+              return fecha.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
+            }),
+            datasets: [{
+              label: 'Alertas diarias',
+              data: valores,
+              borderColor: '#3498db',
+              backgroundColor: 'rgba(52, 152, 219, 0.2)',
+              borderWidth: 3,
+              pointRadius: 5,
+              pointBackgroundColor: '#2c3e50',
+              tension: 0.3 // curva suave
+            }]
+          },
+          options: {
+            responsive: false,
+            plugins: {
+              title: {
+                display: true,
+                text: 'Tendencia Temporal de Alertas por Día',
+                font: { size: 28, weight: 'bold' }
+              },
+              legend: {
+                display: false
+              }
+            },
+            scales: {
+              x: {
+                ticks: {
+                  font: { size: 16 },
+                  maxRotation: 45,
+                  minRotation: 0
+                },
+                grid: { color: 'rgba(0,0,0,0.05)' }
+              },
+              y: {
+                beginAtZero: true,
+                ticks: { font: { size: 16 } },
+                grid: { color: 'rgba(0,0,0,0.1)' }
+              }
+            }
+          }
+        };
+        break;
+
+        // 🗺️ Mapa de calor por cantidad de alertas
+        case 'mapa_calor':
+          const sectoresMapa = datos.sectores || [];
+          const coordenadas = sectoresMapa.map(s => ({
+            nombre: s.nombre_sector,
+            coords: (() => {
+              if (!s.coordinates) return null;
+              // Si viene como GeoJSON
+              if (s.coordinates.type === 'Polygon')
+                return s.coordinates.coordinates[0].map(([lon, lat]) => [lat, lon]);
+              if (s.coordinates.type === 'MultiPolygon')
+                return s.coordinates.coordinates[0][0].map(([lon, lat]) => [lat, lon]);
+              // Si ya es array simple
+              return s.coordinates;
+            })(), // Asegúrate que tu query o procesamiento incluya esto (ver nota abajo)
+            total: s.total_alertas
+          }));
+
+          // Normalizar totales (para intensidad)
+          const maxAlertas = Math.max(...sectoresMapa.map(s => s.total_alertas), 1);
+
+          // Crear canvas y contexto 2D
+          ctx.fillStyle = '#f0f0f0';
+          ctx.fillRect(0, 0, ancho, alto);
+
+          ctx.font = '20px Arial';
+          ctx.fillStyle = '#2c3e50';
+          ctx.fillText('Mapa de Calor por Cantidad de Alertas', 30, 40);
+
+          // Calcular límites de coordenadas
+          let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+          coordenadas.forEach(s => {
+            if (!s.coords) return;
+            s.coords.forEach(([lat, lon]) => {
+              if (lat < minLat) minLat = lat;
+              if (lat > maxLat) maxLat = lat;
+              if (lon < minLon) minLon = lon;
+              if (lon > maxLon) maxLon = lon;
+            });
+          });
+
+          // Margen para evitar bordes
+          const margin = 50;
+          const latRange = maxLat - minLat;
+          const lonRange = maxLon - minLon;
+
+          // Ajuste de escala y offset
+          const scale = Math.min(
+            (ancho - 2 * margin) / lonRange,
+            (alto - 2 * margin) / latRange
+          );
+          const offsetX = margin - minLon * scale;
+          const offsetY = alto - margin + minLat * scale;
+
+
+          // Dibujar cada sector
+          coordenadas.forEach((sector) => {
+            if (!sector.coords) return;
+            const intensidad = sector.total / maxAlertas; // 0–1
+            const color = `rgba(231, 76, 60, ${0.2 + intensidad * 0.8})`; // rojo más intenso según cantidad
+
+            ctx.beginPath();
+            sector.coords.forEach(([lat, lon], i) => {
+              // Escalar coordenadas a una proyección simple (sin librería GIS)
+              const x = lon * scale + offsetX;
+              const y = -lat * scale + offsetY;
+              if (i === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            });
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.strokeStyle = '#34495e';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Etiqueta del sector
+            const centroid = sector.coords.reduce(
+              (acc, [lat, lon]) => [acc[0] + lat, acc[1] + lon],
+              [0, 0]
+            ).map(v => v / sector.coords.length);
+
+            const labelX = (centroid[1] + 70.65) * 8000;
+            const labelY = (centroid[0] + 33.55) * -8000;
+            ctx.fillStyle = '#2c3e50';
+            ctx.font = '14px Helvetica';
+            ctx.fillText(sector.nombre, labelX - 30, labelY);
+          });
+
+          return canvas.toBuffer('image/png', { compressionLevel: 0 });
+
 
     default:
       throw new Error(`Tipo de gráfico desconocido: ${tipo}`);
@@ -516,8 +675,8 @@ async function generarContenidoConPaginas(doc, datos, colores, yStart, espacioMi
   doc.fontSize(16)
      .fillColor(colores.primario)
      .font('Helvetica-Bold')
-     .text('ANÁLISIS VISUAL', 50, yPosition);
-
+     .text('ANÁLISIS TIPO DE DELITO', 50, yPosition);
+  yPosition += 25;
   // 🟢 Gráfico 1: Tipos de alertas (ocupa casi media página)
   await verificarEspacio(350);
   const grafico1 = await generarGraficoComoImagen('tipos_alertas', datos, 900, 450);
@@ -526,6 +685,11 @@ async function generarContenidoConPaginas(doc, datos, colores, yStart, espacioMi
   
   // 🟢 Gráfico 2: Estadísticas generales (debajo del anterior)
   await verificarEspacio(350);
+    doc.fontSize(16)
+     .fillColor(colores.primario)
+     .font('Helvetica-Bold')
+     .text('ESTADÍSTICAS DE LA IA', 50, yPosition);
+  yPosition += 25;
   const grafico2 = await generarGraficoComoImagen('estadisticas_generales', datos, 900, 450);
   doc.image(grafico2, 50, yPosition, { fit: [500, 300], align: 'center' });
   yPosition += 330;
@@ -544,6 +708,20 @@ async function generarContenidoConPaginas(doc, datos, colores, yStart, espacioMi
     doc.image(grafico3, 50, yPosition, { fit: [500, 300], align: 'center' });
     yPosition += 320;
   }
+
+    // 🔹 Sección 2.5: Mapa de calor por cantidad de alertas
+  if (datos.sectores.length > 0) {
+    await verificarEspacio(350);
+    doc.fontSize(14)
+       .fillColor(colores.primario)
+       .text('MAPA DE CALOR DE ALERTAS POR SECTOR', 50, yPosition);
+    yPosition += 25;
+
+    const graficoMapa = await generarGraficoComoImagen('mapa_calor', datos, 900, 600);
+    doc.image(graficoMapa, 50, yPosition, { fit: [500, 400], align: 'center' });
+    yPosition += 420;
+  }
+
   // 🔹 Sección 3: Horarios de mayor incidencia
   if (datos.horarios_alertas) {
     await verificarEspacio(350);
@@ -557,7 +735,18 @@ async function generarContenidoConPaginas(doc, datos, colores, yStart, espacioMi
     yPosition += 320;
   }
 
-  // 🔹 Sección 4: Resumen estadístico
+  // 🔹 Sección 4: Tendencia temporal
+  await verificarEspacio(350);
+  doc.fontSize(14)
+    .fillColor(colores.primario)
+    .text('TENDENCIA TEMPORAL (ALERTAS POR DÍA)', 50, yPosition);
+  yPosition += 25;
+
+  const grafico5 = await generarGraficoComoImagen('tendencia_temporal', datos, 900, 450);
+  doc.image(grafico5, 50, yPosition, { fit: [500, 300], align: 'center' });
+  yPosition += 330;
+
+  // 🔹 Sección 5: Resumen estadístico
   await verificarEspacio(350);
   agregarTablaResumen(doc, datos, colores, yPosition);
 }
