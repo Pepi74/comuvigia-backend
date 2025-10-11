@@ -702,6 +702,8 @@ class VideoStream:
         self.disabled = False
         self.last_reconnect_time = None
         self.socketio_manager = socketio_manager
+        self.batch_timer = None
+        self.batch_interval = BATCH_INTERVAL
 
     def start(self):
         """Iniciar stream con conexión directa + grabación en paralelo"""
@@ -713,13 +715,18 @@ class VideoStream:
         # ✅ FFMPEG PARA GRABACIÓN (en segundo plano)
         if self.segmenter is None:
             self.segmenter = FFmpegSegmenter(self.camera_id, self.link_camara, seg_seconds=BATCH_INTERVAL)
-        self.segmenter.start()
+            self.segmenter.start()
+        elif self.segmenter.proc is None or self.segmenter.proc.poll() is not None:
+            # Si existe pero no está corriendo, reiniciar
+            self.segmenter.start()
         
         # ✅ OPENCV DIRECTO PARA ANÁLISIS
         self.thread = Thread(target=self.update, daemon=True)
         self.thread.start()
         
-        logger.info(f"🎬 Stream cámara {self.camera_id} - Directo + Grabación paralela")
+        self.start_batch_timer()
+        
+        logger.info(f"🎬 Stream cámara {self.camera_id} - Timer batch cada {self.batch_interval}s")
         
         def inicializar_componentes_pesados():
             try:
@@ -738,6 +745,30 @@ class VideoStream:
         
         threading.Thread(target=inicializar_componentes_pesados, daemon=True).start()
     
+    def start_batch_timer(self):
+        """Iniciar timer periódico para guardar batches MKV"""
+        def batch_timer_task():
+            while self.running and not self.disabled:
+                try:
+                    # Esperar el intervalo configurado
+                    time.sleep(self.batch_interval)
+                    
+                    if not self.running or self.disabled:
+                        break
+                    
+                    # ✅ GUARDAR BATCH CADA 5 MINUTOS
+                    logger.info(f"⏰ Cámara {self.camera_id}: Timer batch activado")
+                    self.save_batch()
+                    
+                except Exception as e:
+                    logger.error(f"Cámara {self.camera_id}: Error en timer batch: {str(e)}")
+                    time.sleep(10)  # Esperar antes de reintentar
+        
+        # Iniciar thread del timer
+        self.batch_timer = Thread(target=batch_timer_task, daemon=True)
+        self.batch_timer.start()
+        logger.info(f"⏰ Timer batch iniciado para cámara {self.camera_id} - Intervalo: {self.batch_interval}s")
+
     def update(self):
         """Loop principal con conexión directa RTSP"""
         last_publish_time = 0
@@ -764,7 +795,8 @@ class VideoStream:
                     self.reconnect_direct()
                     time.sleep(1)
                     continue
-                logger.info(f"Cámara {self.camera_id}: Frame capturado - Shape: {frame.shape}, Tipo: {type(frame)}")
+                #logger.info(f"Cámara {self.camera_id}: Frame capturado - Shape: {frame.shape}, Tipo: {type(frame)}")
+               
                 # ✅ RESETEAR CONTADOR SI LA CAPTURA ES EXITOSA
                 if self.reconnect_attempts > 0:
                     self.reconnect_attempts = 0
@@ -801,8 +833,8 @@ class VideoStream:
                     if frame_interval > 0:
                         current_fps = 1 / frame_interval
                         self.fps_win.append(current_fps)
-                        if current_fps < MAX_FPS * 0.5:
-                            logger.warning(f"Cámara {self.camera_id}: FPS bajo: {current_fps:.1f}")
+                        '''if current_fps < MAX_FPS * 0.5:
+                            logger.warning(f"Cámara {self.camera_id}: FPS bajo: {current_fps:.1f}")'''
                 
                 self.last_frame_time = current_time
 
@@ -872,65 +904,155 @@ class VideoStream:
         return self.connect_direct_rtsp()
 
     def save_batch(self):
-        """Guardar batch con overlap inteligente"""
-        with self.buffer_lock:
-            total_frames = len(self.frames_buffer)
-            total_timestamps = len(self.buffer_timestamps)
-            
-            # Verificar mínimo de frames
-            if total_frames < BATCH_SIZE // 2:
-                logger.info(f"Cámara {self.camera_id}: Muy pocos frames ({total_frames})")
+        """Guardar batch coordinando con FFmpeg - VERSIÓN MEJORADA"""
+        try:
+            if not self.segmenter or not hasattr(self.segmenter, 'out_dir'):
+                logger.error(f"Cámara {self.camera_id}: No hay segmenter configurado")
                 return
             
-            # Calcular frames a tomar (batch + overlap)
-            frames_to_take = min(total_frames, BATCH_SIZE + OVERLAP_FRAMES)
-            
-            # Extraer frames y timestamps
-            batch_frames = list(self.frames_buffer)[-frames_to_take:]
-            batch_timestamps = list(self.buffer_timestamps)[-frames_to_take:]
-            
-            if not batch_frames or not batch_timestamps:
+            # Verificar que FFmpeg esté corriendo
+            if not self.segmenter.proc or self.segmenter.proc.poll() is not None:
+                logger.error(f"Cámara {self.camera_id}: FFmpeg no está corriendo, reiniciando...")
+                self.segmenter.start()
+                time.sleep(5)  # Esperar a que FFmpeg se inicie
                 return
             
-            # Calcular timestamps exactos
-            start_time = datetime.fromtimestamp(batch_timestamps[0])
-            end_time = datetime.fromtimestamp(batch_timestamps[-1])
-            actual_duration = (end_time - start_time).total_seconds()
+            # Obtener el archivo más reciente grabado por FFmpeg
+            segment_dir = self.segmenter.out_dir
+            if not segment_dir.exists():
+                logger.error(f"Cámara {self.camera_id}: Directorio de segmentos no existe: {segment_dir}")
+                return
+            
+            # Listar archivos MKV recientes (últimos 10 minutos)
+            mkv_files = list(segment_dir.glob("*.mkv"))
+            current_time = time.time()
+            
+            # Filtrar archivos de los últimos 10 minutos
+            recent_mkv_files = [f for f in mkv_files if current_time - f.stat().st_mtime < 600]
+            
+            if not recent_mkv_files:
+                logger.warning(f"Cámara {self.camera_id}: No hay archivos MKV recientes (últimos 10min)")
+                # Listar todos los archivos para diagnóstico
+                if mkv_files:
+                    logger.info(f"Cámara {self.camera_id}: Archivos MKV existentes (más antiguos):")
+                    for mkv in sorted(mkv_files, key=lambda x: x.stat().st_mtime, reverse=True)[:3]:
+                        age = current_time - mkv.stat().st_mtime
+                        logger.info(f"  - {mkv.name} ({age:.1f}s old, {mkv.stat().st_size/1024/1024:.2f}MB)")
+                return
+            
+            # Tomar el archivo más reciente que tenga al menos 10 segundos de antigüedad
+            valid_files = [f for f in recent_mkv_files if current_time - f.stat().st_mtime > 10]
+            
+            if not valid_files:
+                logger.info(f"Cámara {self.camera_id}: Archivos MKV muy recientes (<10s), esperando...")
+                return
+                
+            latest_mkv = max(valid_files, key=lambda x: x.stat().st_mtime)
+            
+            # Verificar que el archivo tenga tamaño adecuado (mínimo 1MB para 5 minutos)
+            file_size = latest_mkv.stat().st_size
+            if file_size < 1024 * 1024:  # Mínimo 1MB
+                logger.warning(f"Cámara {self.camera_id}: Archivo MKV muy pequeño: {file_size/1024/1024:.2f} MB")
+                return
+            
+            # Calcular duración basada en timestamp del archivo
+            file_mtime = datetime.fromtimestamp(latest_mkv.stat().st_mtime)
+            timestamp = datetime.now()
+            
+            # Intentar calcular duración real desde el nombre del archivo
+            try:
+                # El formato es %Y%m%d_%H%M%S.mkv
+                filename = latest_mkv.stem
+                file_dt = datetime.strptime(filename, '%Y%m%d_%H%M%S')
+                duration_seconds = (timestamp - file_dt).total_seconds()
+                # Ajustar a un valor razonable (entre 30s y 10min)
+                duration_seconds = max(30, min(duration_seconds, 600))
+            except Exception as e:
+                logger.warning(f"Cámara {self.camera_id}: No se pudo calcular duración desde nombre: {e}")
+                duration_seconds = BATCH_INTERVAL  # Valor por defecto
             
             # Preparar metadata
             custom_metadata = {
-                'start_time': start_time,
-                'end_time': end_time,
-                'actual_duration': actual_duration,
-                'total_frames': len(batch_frames),
-                'overlap_frames': OVERLAP_FRAMES,
-                'theoretical_frames': BATCH_SIZE,
-                'expected_duration': BATCH_SIZE / MAX_FPS,
-                'source': 'continuous_with_overlap'
+                'start_time': timestamp - timedelta(seconds=duration_seconds),
+                'end_time': timestamp,
+                'actual_duration': duration_seconds,
+                'file_size_bytes': file_size,
+                'source': 'ffmpeg_segment',
+                'codec': 'h264',
+                'container': 'mkv',
+                'expected_duration': BATCH_INTERVAL,
+                'file_creation_time': file_mtime.isoformat()
             }
             
-            # 🔄 MANTENER OVERLAP PARA EL PRÓXIMO BATCH
-            frames_to_keep = min(OVERLAP_FRAMES, total_frames)
-            self.frames_buffer = deque(
-                list(self.frames_buffer)[-frames_to_keep:], 
-                maxlen=BATCH_SIZE * 3
-            )
-            self.buffer_timestamps = deque(
-                list(self.buffer_timestamps)[-frames_to_keep:], 
-                maxlen=BATCH_SIZE * 3
-            )
-            
-            self.last_batch_time = time.time()
-            
-            logger.info(f"Cámara {self.camera_id}: Batch guardado - "
-                    f"{len(batch_frames)} frames, {actual_duration:.1f}s, "
-                    f"keep: {frames_to_keep} frames")
-            
-            # Subir a S3
-            Thread(target=self.s3_client.upload_batch, 
-                args=(self.camera_id, batch_frames, end_time, custom_metadata, False), 
+            # Subir el archivo MKV a S3
+            Thread(target=self.upload_mkv_to_s3, 
+                args=(latest_mkv, timestamp, custom_metadata), 
                 daemon=True).start()
             
+            logger.info(f"Cámara {self.camera_id}: Batch MKV enviado a S3 - {latest_mkv.name} "
+                    f"({file_size/1024/1024:.2f} MB, {duration_seconds:.1f}s)")
+            
+        except Exception as e:
+            logger.error(f"Cámara {self.camera_id}: Error en save_batch MKV: {str(e)}")
+            
+    def upload_mkv_to_s3(self, mkv_path, timestamp, custom_metadata):
+        """Subir archivo MKV a S3"""
+        try:
+            # Preparar key para S3
+            date_path = timestamp.strftime('%Y/%m/%d/%H')
+            batch_id = f"{self.camera_id}_{timestamp.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+            key = f"batches/{self.camera_id}/{date_path}/{batch_id}.mkv"
+            
+            # Metadata para S3
+            metadata = {
+                "camera_id": str(self.camera_id),
+                "timestamp": timestamp.isoformat(),
+                "duration_seconds": BATCH_INTERVAL,
+                "codec": "h264",
+                "container": "matroska",
+                "version": "1.1",
+                "batch_type": "continuous_mkv"
+            }
+            
+            # Fusionar metadata
+            if custom_metadata:
+                for k, v in custom_metadata.items():
+                    if isinstance(v, (int, float)):
+                        metadata[k] = str(v)  # Convertir números explícitamente
+                    elif isinstance(v, (str, bool)):
+                        metadata[k] = str(v)
+                    elif isinstance(v, datetime):
+                        metadata[k] = v.isoformat()
+                    elif v is not None:
+                        metadata[k] = str(v)
+            # Normalizar metadata
+            for k, v in metadata.items():
+                if not isinstance(v, str):
+                    metadata[k] = str(v) if v is not None else ""
+            
+            # Subir a S3
+            self.s3_client.client.upload_file(
+                Filename=str(mkv_path),
+                Bucket=S3_BUCKET_NAME,
+                Key=key,
+                ExtraArgs={
+                    'ContentType': 'video/x-matroska',
+                    'Metadata': metadata
+                }
+            )
+            
+            logger.info(f"✅ Cámara {self.camera_id}: MKV subido a S3 - {key}")
+            
+            # Opcional: eliminar archivo local después de subir
+            try:
+                mkv_path.unlink()
+                logger.debug(f"Cámara {self.camera_id}: Archivo local eliminado - {mkv_path.name}")
+            except Exception as e:
+                logger.warning(f"Cámara {self.camera_id}: No se pudo eliminar archivo local: {e}")
+                
+        except Exception as e:
+            logger.error(f"Cámara {self.camera_id}: Error subiendo MKV a S3: {str(e)}")
+
     def get_frame(self):
         with self.lock:
             if self.frame is None:
@@ -951,7 +1073,7 @@ class VideoStream:
                     int(cv2.IMWRITE_JPEG_QUALITY), 80
                 ])
                 
-                logger.info(f"Cámara {self.camera_id}: JPEG encoded - Size: {len(jpeg.tobytes())} bytes")
+                #logger.info(f"Cámara {self.camera_id}: JPEG encoded - Size: {len(jpeg.tobytes())} bytes")
                 return jpeg.tobytes()
                 
             except Exception as e:
@@ -1034,6 +1156,9 @@ class VideoStream:
     def stop_components(self):
         """Detener componentes de la cámara de manera segura"""
         try:
+            # Detener timer primero
+            self.running = False
+
             if self.cap:
                 self.cap.release()
                 self.cap = None
@@ -1042,7 +1167,7 @@ class VideoStream:
                 self.segmenter.stop()
                 
             self.frame = None
-            logger.info(f"Cámara {self.camera_id}: Componentes detenidos por falla de reconexión")
+            logger.info(f"Cámara {self.camera_id}: Componentes y timer detenidos")
         except Exception as e:
             logger.error(f"Cámara {self.camera_id}: Error deteniendo componentes: {str(e)}")
 
@@ -1090,7 +1215,7 @@ class VideoStream:
             return False
         
 class FFmpegSegmenter:
-    def __init__(self, cam_id, stream_url, out_dir="/tmp/segments", seg_seconds=300, base_port=12000):
+    def __init__(self, cam_id, stream_url, out_dir="/tmp/segments", seg_seconds=BATCH_INTERVAL, base_port=12000):
         self.cam_id = cam_id
         self.stream_url = stream_url
         self.out_dir = Path(out_dir) / str(cam_id)
@@ -1098,53 +1223,59 @@ class FFmpegSegmenter:
         self.seg_seconds = seg_seconds
         self.proc = None
         self.port = base_port + int(cam_id)  # puerto único por cámara
-        self.preview_url = (
-            f"udp://127.0.0.1:{self.port}"
-            f"?pkt_size=1316"                # tamaño típico para TS
-            f"&fifo_size=5000000"            # 5 MB de buffer (se puede ajustar)
-            f"&overrun_nonfatal=1"           # no matar el stream si se llena
-            f"&reuse=1"                      # reusar socket
-        )
-
-    def start(self):
-        """FFmpeg solo para grabación, sin output UDP"""
-        args = [
-            "ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error",
+         # Configuración mejorada de FFmpeg
+        self.ffmpeg_args = [
+            "ffmpeg", 
+            "-hide_banner", 
+            "-nostats", 
+            "-loglevel", "error",
+            "-rtsp_transport", "tcp",  # Mejor estabilidad
+            "-max_delay", "500000",    # Máximo delay para RTSP
             "-i", self.stream_url,
-            "-c", "copy",  # Copy sin re-encode
+            "-c", "copy",              # Sin re-encoding
             "-f", "segment",
             "-segment_time", str(self.seg_seconds),
+            "-segment_format", "matroska",  # Formato MKV explícito
             "-reset_timestamps", "1",
             "-strftime", "1",
+            "-segment_atclocktime", "1",    # Segmentos en tiempos exactos
+            "-avoid_negative_ts", "make_zero",
             f"{str(self.out_dir)}/%Y%m%d_%H%M%S.mkv"
         ]
-        
-        # SIN output UDP - solo grabación a archivo
+
+    def start(self):
+        """Iniciar FFmpeg para grabación con segmentos"""
         try:
             ffmpeg_log = open(f"/logs/ffmpeg_record_{self.cam_id}.log", "ab", buffering=0)
-            self.proc = subprocess.Popen(args, stdout=ffmpeg_log, stderr=ffmpeg_log)
+            self.proc = subprocess.Popen(self.ffmpeg_args, stdout=ffmpeg_log, stderr=ffmpeg_log)
             logger.info(f"🎥 FFmpeg grabación iniciada cámara {self.cam_id} (PID: {self.proc.pid})")
+            
+            # Esperar a que comience a generar archivos
+            time.sleep(2)
+            
         except Exception as e:
             logger.error(f"❌ Error FFmpeg grabación cámara {self.cam_id}: {e}")
 
+    def get_latest_segment(self):
+        """Obtener el segmento más reciente"""
+        try:
+            mkv_files = list(self.out_dir.glob("*.mkv"))
+            return max(mkv_files, key=lambda x: x.stat().st_mtime) if mkv_files else None
+        except Exception as e:
+            logger.error(f"Error obteniendo segmento cámara {self.cam_id}: {e}")
+            return None
+
     def stop(self):
-        """Detener FFmpeg de manera más agresiva"""
+        """Detener FFmpeg de manera segura"""
         if self.proc and self.proc.poll() is None:
             try:
-                # ✅ TERMINACIÓN MÁS AGRESIVA
                 self.proc.terminate()
-                self.proc.wait(timeout=3)  # ✅ Timeout más corto
+                self.proc.wait(timeout=5)
+                logger.info(f"FFmpeg detenido cámara {self.cam_id}")
             except subprocess.TimeoutExpired:
-                logger.warning(f"⚠️ FFmpeg no respondió a terminate, usando kill")
-                try:
-                    # ✅ FORZAR TERMINACIÓN
-                    if hasattr(os, 'killpg'):
-                        os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
-                    else:
-                        self.proc.kill()
-                    self.proc.wait(timeout=2)
-                except:
-                    pass
+                logger.warning(f"FFmpeg no respondió, forzando terminación cámara {self.cam_id}")
+                self.proc.kill()
+                self.proc.wait()
 
 # Inicializar streams para todas las cámaras
 video_streams = {}
@@ -1523,6 +1654,76 @@ def socketio_debug():
         'backend_url': SOCKETIO_BACKEND_URL
     }
     return jsonify(debug_info)
+
+@app.route('/debug/ffmpeg/<camera_id>')
+def debug_ffmpeg(camera_id):
+    """Debugging de FFmpeg"""
+    try:
+        camera_id_int = int(camera_id)
+        if camera_id_int not in video_streams:
+            return jsonify({"error": f"Cámara {camera_id} no encontrada"}), 404
+        
+        stream = video_streams[camera_id_int]
+        segmenter = stream.segmenter
+        
+        if not segmenter:
+            return jsonify({"error": "Segmenter no inicializado"}), 400
+        
+        # Información del directorio
+        segment_dir = segmenter.out_dir
+        mkv_files = list(segment_dir.glob("*.mkv"))
+        
+        segments_info = []
+        for mkv_file in sorted(mkv_files, key=lambda x: x.stat().st_mtime, reverse=True)[:10]:
+            stat = mkv_file.stat()
+            segments_info.append({
+                'name': mkv_file.name,
+                'size_mb': round(stat.st_size / (1024 * 1024), 2),
+                'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'age_seconds': round(time.time() - stat.st_mtime, 1),
+                'path': str(mkv_file)
+            })
+        
+        # Verificar proceso FFmpeg
+        ffmpeg_running = segmenter.proc and segmenter.proc.poll() is None
+        ffmpeg_pid = segmenter.proc.pid if segmenter.proc else None
+        
+        return jsonify({
+            "camera_id": camera_id_int,
+            "ffmpeg_running": ffmpeg_running,
+            "ffmpeg_pid": ffmpeg_pid,
+            "segment_dir": str(segment_dir),
+            "total_segments": len(mkv_files),
+            "segments": segments_info,
+            "batch_interval": BATCH_INTERVAL,
+            "segment_duration": segmenter.seg_seconds
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/debug/config')
+def debug_config():
+    """Verificar configuración completa"""
+    config_info = {
+        "batch_config": {
+            "BATCH_DURATION_MIN": BATCH_DURATION_MIN,
+            "BATCH_INTERVAL": BATCH_INTERVAL,
+            "BATCH_SIZE": BATCH_SIZE,
+            "MAX_FPS": MAX_FPS
+        },
+        "active_cameras": {}
+    }
+    
+    for camera_id, stream in video_streams.items():
+        config_info["active_cameras"][camera_id] = {
+            "batch_interval": stream.batch_interval,
+            "segmenter_seconds": stream.segmenter.seg_seconds if stream.segmenter else None,
+            "running": stream.running,
+            "disabled": stream.disabled
+        }
+    
+    return jsonify(config_info)
 
 @app.route('/api/cameras/<camera_id>/enable', methods=['POST'])
 def enable_camera(camera_id):
