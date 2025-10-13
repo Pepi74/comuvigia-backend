@@ -72,16 +72,48 @@ router.get('/usuario', verificarToken, verificarRol([1, 2]), async (req, res) =>
   }
 })
 
-// Endpoint para modificar el rol de un usuario por id
+// Endpoint para modificar los campos de un usuario por id
 router.put('/:id', verificarToken, verificarRol([2]), async (req, res) => {
   const { id } = req.params
-  const rol = req.body.rol
+  const { usuario, contrasena, nombre, rol } = req.body
 
   try {
-    const result = await pool.query(
-      'UPDATE usuarios SET rol = $1 WHERE id = $2 RETURNING id, usuario, nombre, rol',
-      [rol, id]
-    )
+    const fields = []
+    const values = []
+    let index = 1
+
+    if (usuario && usuario.trim() !== '') {
+      fields.push(`usuario = $${index++}`)
+      values.push(usuario)
+    }
+    if (contrasena && contrasena.trim() !== '') {
+      const hash = await bcrypt.hash(contrasena, 10)
+      fields.push(`contrasena = $${index++}`)
+      values.push(hash)
+    }
+    if (nombre && nombre.trim() !== '') {
+      fields.push(`nombre = $${index++}`)
+      values.push(nombre)
+    }
+    if (rol) {
+      fields.push(`rol = $${index++}`)
+      values.push(rol)
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: "No se proporcionaron campos para actualizar" })
+    }
+
+    values.push(id)
+    
+    const query = `
+      UPDATE usuarios
+      SET ${fields.join(', ')}
+      WHERE id = $${index}
+      RETURNING id, usuario, nombre, rol
+    `
+
+    const result = await pool.query(query, values)
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Usuario no encontrado" })
     }
@@ -91,8 +123,6 @@ router.put('/:id', verificarToken, verificarRol([2]), async (req, res) => {
     res.status(500).json({ error: "Error al actualizar usuario" })
   }
 })
-
-// TODO: Endpoint para modificar usuario, contraseña, nombre y/o rol
 
 // Endpoint para eliminar usuario por id
 router.delete('/:id', verificarToken, verificarRol([2]), async (req, res) => {
