@@ -475,7 +475,9 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
       merodeos: 0,
       portonazos: 0,
       asaltos_hogar: 0,
-      no_especificados: 0
+      no_especificados: 0,
+      especificadas:0,
+
     };
 
     // Agrupar por sector
@@ -483,6 +485,7 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
     
     result.rows.forEach(row => {
       // Totales generales
+      
       totales.total_alertas += parseInt(row.total_alertas) || 0;
       totales.alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
       totales.falsos_positivos += parseInt(row.falsos_positivos) || 0;
@@ -490,6 +493,10 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
       totales.portonazos += parseInt(row.portonazos) || 0;
       totales.no_especificados += parseInt(row.no_especificados) || 0;
       totales.asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
+
+      
+
+
       // Por sector
       const sectorId = row.id_sector;
       if (!sectores[sectorId]) {
@@ -501,9 +508,11 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
           falsos_positivos: 0,
           merodeos: 0,
           portonazos: 0,
-          no_especificados: 0
+          no_especificados: 0,
+          especificadas:0,
         };
       }
+
 
       sectores[sectorId].total_alertas += parseInt(row.total_alertas) || 0;
       sectores[sectorId].alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
@@ -512,21 +521,24 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
       sectores[sectorId].portonazos += parseInt(row.portonazos) || 0;
       sectores[sectorId].asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
       sectores[sectorId].no_especificados += parseInt(row.no_especificados) || 0;
+      sectores[sectorId].especificadas += sectores[sectorId].total_alertas - sectores[sectorId].no_especificados
     });
 
+    console.log(totales);
+    totales.especificadas = totales.falsos_positivos + totales.alertas_confirmadas 
     // Calcular tasa de confianza
-    const tasaConfianza = totales.total_alertas > 0 
-      ? Math.round((totales.alertas_confirmadas / totales.total_alertas) * 100 )
+    const tasaConfianza = totales.especificadas > 0 
+      ? Math.round((totales.alertas_confirmadas / totales.especificadas) * 100 )
       : 0;
     
     // Porcentaje de alertas que son verdaderas positivas (excluye falsos positivos del total)
-    const tasaPrecision = totales.total_alertas > 0 
-      ? Math.round((totales.alertas_confirmadas / (totales.total_alertas - totales.falsos_positivos)) * 100)
+    const tasaPrecision = totales.especificadas > 0 
+      ? Math.round((totales.alertas_confirmadas / (totales.especificadas - totales.falsos_positivos)) * 100)
       : 0;
 
     // Porcentaje de alertas que fueron falsos positivos
-    const tasaFalsosPositivos = totales.total_alertas > 0 
-      ? Math.round((totales.falsos_positivos / totales.total_alertas) * 100)
+    const tasaFalsosPositivos = totales.especificadas > 0 
+      ? Math.round((totales.falsos_positivos / totales.especificadas) * 100)
       : 0;
 
     // Métrica compuesta que penaliza falsos positivos
@@ -534,7 +546,7 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
       ? Math.round((
           (totales.alertas_confirmadas * 2) - // Doble peso a confirmadas
           totales.falsos_positivos            // Penalización por falsos positivos
-        ) / (totales.total_alertas * 2) * 100) // Normalizado a 100
+        ) / (totales.especificadas * 2) * 100) // Normalizado a 100
       : 0;
 
     res.json({
