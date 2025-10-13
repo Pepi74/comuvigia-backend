@@ -94,10 +94,11 @@ router.post('/nueva-alerta', async (req, res) => {
           );
 
           // Actualizar el objeto de alerta con la info de S3
-          nuevaAlerta.s3_key = s3Result.s3_info.key;
+          nuevaAlerta.clip = s3Result.s3_info.key;
+          /* nuevaAlerta.s3_key = s3Result.s3_info.key;
           nuevaAlerta.s3_bucket = s3Result.s3_info.bucket;
           nuevaAlerta.frames_count = s3Result.s3_info.frames_count;
-          nuevaAlerta.s3_url = s3Result.s3_info.s3_url;
+          nuevaAlerta.s3_url = s3Result.s3_info.s3_url; */
         }
       } catch (s3Error) {
         console.error('Error guardando frames en S3:', s3Error);
