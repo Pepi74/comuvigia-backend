@@ -123,7 +123,7 @@ router.post('/', verificarToken, verificarRol([2]), async (req, res) => {
       link_camara = '',
       link_camara_externo = '',
       id_sector,
-      zona_interes = ''
+      zona_interes
     } = req.body
 
     // Validaciones básicas
@@ -150,7 +150,7 @@ router.post('/', verificarToken, verificarRol([2]), async (req, res) => {
       link_camara,
       link_camara_externo,
       id_sector,
-      zona_interes
+      zona_interes ? JSON.stringify(zona_interes) : '{}'
     ]
 
     const result = await pool.query(query, values)
