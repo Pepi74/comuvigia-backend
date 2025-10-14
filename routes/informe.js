@@ -24,11 +24,16 @@ router.get('/generar-pdf', verificarToken, verificarRol([1, 2]), async (req, res
     res.send(pdfBuffer);
     
   } catch (error) {
-    console.error('Error generando PDF:', error);
+    console.error('Error al generar el PDF:', error);
+
+    let mensajeUsuario = "Ocurrió un problema al generar el reporte.";
+    if (error.message.includes("column")) mensajeUsuario = "Error en los datos del reporte. Verifica las columnas de la base de datos.";
+    else if (error.message.includes("time value")) mensajeUsuario = "Error al procesar las fechas del reporte. Revisa el formato de las fechas seleccionadas.";
+    else if (error.message.includes("connect")) mensajeUsuario = "No se pudo conectar con la base de datos. Intenta nuevamente.";
+    else if (error.message.includes("undefined")) mensajeUsuario = "Error interno al procesar los datos del informe.";
+
     res.status(500).json({ 
-      success: false, 
-      error: 'Error al generar PDF',
-      detalle: error.message 
+      error: mensajeUsuario
     });
   }
 });
@@ -211,8 +216,13 @@ async function obtenerDatosParaPDF(fechaInicio, fechaFin) {
     };
     
   } catch (error) {
-    console.error('Error en obtenerDatosParaPDF:', error);
-    throw error;
+    console.error('⚠️ Error en obtenerDatosParaPDF:', error);
+
+    const mensajeError = error.message.includes("reporte_alertas_por_periodo")
+      ? "No se pudieron recuperar los datos del informe. Revisa la función SQL."
+      : "Error interno al preparar los datos del PDF.";
+
+    throw new Error(mensajeError + " → " + error.message);
   } finally {
     if (client) client.release();
   }
@@ -473,94 +483,126 @@ async function generarGraficoComoImagen(tipo, datos, ancho = 1000, alto = 600) {
 
         // 🗺️ Mapa de calor por cantidad de alertas
         case 'mapa_calor':
-          const sectoresMapa = datos.sectores || [];
-          const coordenadas = sectoresMapa.map(s => ({
-            nombre: s.nombre_sector,
-            coords: (() => {
-              if (!s.coordinates) return null;
-              // Si viene como GeoJSON
-              if (s.coordinates.type === 'Polygon')
-                return s.coordinates.coordinates[0].map(([lon, lat]) => [lat, lon]);
-              if (s.coordinates.type === 'MultiPolygon')
-                return s.coordinates.coordinates[0][0].map(([lon, lat]) => [lat, lon]);
-              // Si ya es array simple
-              return s.coordinates;
-            })(), // Asegúrate que tu query o procesamiento incluya esto (ver nota abajo)
-            total: s.total_alertas
-          }));
+        const sectoresMapa = datos.sectores || [];
+        const coordenadas = sectoresMapa.map(s => ({
+          nombre: s.nombre_sector,
+          coords: (() => {
+            if (!s.coordinates) return null;
+            if (s.coordinates.type === 'Polygon')
+              return s.coordinates.coordinates[0].map(([lon, lat]) => [lat, lon]);
+            if (s.coordinates.type === 'MultiPolygon')
+              return s.coordinates.coordinates[0][0].map(([lon, lat]) => [lat, lon]);
+            return s.coordinates;
+          })(),
+          total: s.total_alertas
+        }));
 
-          // Normalizar totales (para intensidad)
-          const maxAlertas = Math.max(...sectoresMapa.map(s => s.total_alertas), 1);
+        const maxAlertas = Math.max(...sectoresMapa.map(s => s.total_alertas), 1);
+        const minAlertas = Math.min(...sectoresMapa.map(s => s.total_alertas), 0);
 
-          // Crear canvas y contexto 2D
-          ctx.fillStyle = '#f0f0f0';
-          ctx.fillRect(0, 0, ancho, alto);
+        // Fondo y título
+        ctx.fillStyle = '#f0f0f0';
+        ctx.fillRect(0, 0, ancho, alto);
+        ctx.font = '22px Helvetica-Bold';
+        ctx.fillStyle = '#2c3e50';
+        ctx.fillText('Mapa de Calor por Cantidad de Alertas', 30, 40);
 
-          ctx.font = '20px Arial';
+        // Calcular límites de coordenadas
+        let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+        coordenadas.forEach(s => {
+          if (!s.coords) return;
+          s.coords.forEach(([lat, lon]) => {
+            if (lat < minLat) minLat = lat;
+            if (lat > maxLat) maxLat = lat;
+            if (lon < minLon) minLon = lon;
+            if (lon > maxLon) maxLon = lon;
+          });
+        });
+
+        const margin = 80;
+        const latRange = maxLat - minLat;
+        const lonRange = maxLon - minLon;
+        const scale = Math.min(
+          (ancho - 2 * margin) / lonRange,
+          (alto - 2 * margin) / latRange
+        );
+        const offsetX = margin - minLon * scale;
+        const offsetY = alto - margin + minLat * scale;
+
+        // 🔹 Dibujar los sectores
+        coordenadas.forEach((sector) => {
+          if (!sector.coords) return;
+          const intensidad = (sector.total - minAlertas) / (maxAlertas - minAlertas || 1);
+          const color = `rgba(231, 76, 60, ${0.25 + intensidad * 0.75})`;
+
+          ctx.beginPath();
+          sector.coords.forEach(([lat, lon], i) => {
+            const x = lon * scale + offsetX;
+            const y = -lat * scale + offsetY;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+          ctx.closePath();
+          ctx.fillStyle = color;
+          ctx.fill();
+          ctx.strokeStyle = '#34495e';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          // Etiqueta del sector
+          const centroid = sector.coords.reduce(
+            (acc, [lat, lon]) => [acc[0] + lat, acc[1] + lon],
+            [0, 0]
+          ).map(v => v / sector.coords.length);
+
+          const labelX = centroid[1] * scale + offsetX;
+          const labelY = -centroid[0] * scale + offsetY;
           ctx.fillStyle = '#2c3e50';
-          ctx.fillText('Mapa de Calor por Cantidad de Alertas', 30, 40);
+          ctx.font = '13px Helvetica';
+          ctx.fillText(sector.nombre, labelX - 30, labelY);
+        });
 
-          // Calcular límites de coordenadas
-          let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-          coordenadas.forEach(s => {
-            if (!s.coords) return;
-            s.coords.forEach(([lat, lon]) => {
-              if (lat < minLat) minLat = lat;
-              if (lat > maxLat) maxLat = lat;
-              if (lon < minLon) minLon = lon;
-              if (lon > maxLon) maxLon = lon;
-            });
-          });
+        // 🔸 AGREGAR LEYENDA DE COLOR (abajo a la izquierda)
+        const legendWidth = 180;
+        const legendHeight = 20;
+        const legendMarginX = 60;  // margen desde el borde izquierdo
+        const legendMarginY = alto - 80;  // posición vertical (80px desde abajo)
 
-          // Margen para evitar bordes
-          const margin = 50;
-          const latRange = maxLat - minLat;
-          const lonRange = maxLon - minLon;
+        // Gradiente de intensidad (pocas alertas → muchas alertas)
+        const grad = ctx.createLinearGradient(
+          legendMarginX,
+          legendMarginY,
+          legendMarginX + legendWidth,
+          legendMarginY
+        );
+        grad.addColorStop(0, 'rgba(231,76,60,0.25)');
+        grad.addColorStop(1, 'rgba(231,76,60,1)');
 
-          // Ajuste de escala y offset
-          const scale = Math.min(
-            (ancho - 2 * margin) / lonRange,
-            (alto - 2 * margin) / latRange
-          );
-          const offsetX = margin - minLon * scale;
-          const offsetY = alto - margin + minLat * scale;
+        // Dibujar el rectángulo de la leyenda
+        ctx.fillStyle = grad;
+        ctx.fillRect(legendMarginX, legendMarginY, legendWidth, legendHeight);
+
+        // Borde del rectángulo
+        ctx.strokeStyle = '#2c3e50';
+        ctx.strokeRect(legendMarginX, legendMarginY, legendWidth, legendHeight);
+
+        // Etiquetas de valores
+        ctx.fillStyle = '#2c3e50';
+        ctx.font = '14px Helvetica';
+        ctx.fillText(`${minAlertas} alertas`, legendMarginX, legendMarginY + 40);
+        ctx.fillText(`${maxAlertas} alertas`, legendMarginX + legendWidth - 80, legendMarginY + 40);
+
+        // Texto descriptivo
+        ctx.font = '13px Helvetica-Oblique';
+        ctx.fillText(
+          'Intensidad de color = cantidad de alertas',
+          legendMarginX,
+          legendMarginY + 65
+        );
 
 
-          // Dibujar cada sector
-          coordenadas.forEach((sector) => {
-            if (!sector.coords) return;
-            const intensidad = sector.total / maxAlertas; // 0–1
-            const color = `rgba(231, 76, 60, ${0.2 + intensidad * 0.8})`; // rojo más intenso según cantidad
+        return canvas.toBuffer('image/png', { compressionLevel: 0 });
 
-            ctx.beginPath();
-            sector.coords.forEach(([lat, lon], i) => {
-              // Escalar coordenadas a una proyección simple (sin librería GIS)
-              const x = lon * scale + offsetX;
-              const y = -lat * scale + offsetY;
-              if (i === 0) ctx.moveTo(x, y);
-              else ctx.lineTo(x, y);
-            });
-            ctx.closePath();
-            ctx.fillStyle = color;
-            ctx.fill();
-            ctx.strokeStyle = '#34495e';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-
-            // Etiqueta del sector
-            const centroid = sector.coords.reduce(
-              (acc, [lat, lon]) => [acc[0] + lat, acc[1] + lon],
-              [0, 0]
-            ).map(v => v / sector.coords.length);
-
-            const labelX = (centroid[1] + 70.65) * 8000;
-            const labelY = (centroid[0] + 33.55) * -8000;
-            ctx.fillStyle = '#2c3e50';
-            ctx.font = '14px Helvetica';
-            ctx.fillText(sector.nombre, labelX - 30, labelY);
-          });
-
-          return canvas.toBuffer('image/png', { compressionLevel: 0 });
 
 
     default:
