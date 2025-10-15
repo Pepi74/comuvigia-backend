@@ -386,7 +386,14 @@ INSERT INTO public.camaras ( nombre, posicion, direccion, estado_camara, ultima_
 ('Cámara Centro', '{-33.51989, -70.57076}', 'Avda Departamental 10450', false, '2024-06-09 19:30:00', 'rtsp://192.168.194.154:8554/cam_rtsp2', 2, 'http://localhost:5000/video_feed/3'),
 ('Cámara Merodeo', '{-33.53235, -70.60089}', 'Nva Uno 6476', true, '2024-06-09 19:30:00', '/loitering.mp4', 5, ''),
 ('Camára Asalto a Hogar', '{-33.5277, -70.57909}', 'Yungay 645', true, '2024-06-09 19:30:00', '/burglary.mp4', 6, ''),
-('Cámara Portonazo', '{-33.53987, -70.57537}', 'Atahualpa 6892', true, '2024-06-09 19:30:00', '/portonazo.mp4', 8, '');
+('Cámara Portonazo', '{-33.53987, -70.57537}', 'Atahualpa 6892', true, '2024-06-09 19:30:00', '/portonazo.mp4', 8, ''),
+('Cámara 7', '{-33.5442, -70.59787}', 'Calle Falsa 123', true, '2024-06-09 19:30:00', '/loitering.mp4', 7, ''),
+('Cámara 8', '{-33.5233, -70.54786}', 'Calle Verdadera 456', true, '2024-06-09 19:30:00', '/loitering.mp4', 3, ''),
+('Cámara 9', '{-33.51472, -70.53653}', 'Avenida Siempre Viva 789', true, '2024-06-09 19:30:00', '/loitering.mp4', 4, ''),
+('Cámara 10', '{-33.53375, -70.55198}', 'Boulevard Central 101', true, '2024-06-09 19:30:00', '/burglary.mp4', 9, ''),
+('Cámara 11', '{-33.55601, -70.60608}', 'Plaza Mayor 202', true, '2024-06-09 19:30:00', '', 10, '/burglary.mp4'),
+('Cámara 12', '{-33.55551, -70.59466}', 'Callejón del Gato 303', true, '2024-06-09 19:30:00', '/burglary.mp4', 11, ''),
+('Cámara 13', '{-33.55522, -70.57363}', 'Callejón del Gato 303', true, '2024-06-09 19:30:00', '/portonazo.mp4', 12, '');
 
 -- Insertar datos en la tabla alertas
 INSERT INTO public.alertas (id, id_camara, mensaje, hora_suceso, score_confianza, descripcion_suceso, estado, tipo, clip) VALUES
@@ -415,12 +422,32 @@ INSERT INTO public.alertas (id, id_camara, mensaje, hora_suceso, score_confianza
 (24, 3, 'Portonazo', '2025-08-14 05:20:58.495481', 0.89, '[Alerta merodeo] sin datos (error del analizador)', 1, 2, NULL),
 (25, 2, 'Portonazo', '2025-08-14 05:26:41.290484', 0.93, '[Alerta merodeo] sin datos (error del analizador)', 0, 2, NULL),
 (26, 6, 'Asalto hogar', '2025-08-14 05:32:57.458472', 0.75, 'La persona lleva una camiseta blanca en pantalones negros. No se observa anomalía.', 1, 3, NULL),
-(27, 6, 'Asalto hogar', '2025-08-14 05:34:40.703153', 0.65, 'Niño con camiseta blanca en pantalón negro, lleva una mochila roja. Cabeza negra corta, no se observa barba. Se mueve con normalidad, observando el camino.', 1, 3, NULL);
+(27, 6, 'Asalto hogar', '2025-08-14 05:34:40.703153', 0.65, 'Niño con camiseta blanca en pantalón negro, lleva una mochila roja. Cabeza negra corta, no se observa barba. Se mueve con normalidad, observando el camino.', 1, 3, NULL),
+(28, 7, 'Merodeo', '2025-01-05 10:20:15.543210', 0.88, 'Hombre con chaqueta oscura y gorra, mirando constantemente por encima del hombro.', 1, 1, NULL),
+(29, 8, 'Merodeo', '2025-01-15 14:45:01.987654', 0.95, 'Mujer con mochila grande, deteniéndose frente a varias casas y tomando fotos.', 0, 1, NULL),
+(30, 9, 'Asalto hogar', '2025-02-03 03:05:30.123456', 0.72, 'Vehículo sospechoso (sedán rojo) estacionado sin luces por más de 15 minutos cerca de la entrada.', 1, 3, NULL),
+(31, 10, 'Portonazo', '2025-02-28 18:55:40.678901', 0.91, 'Dos individuos en moto esperando en una esquina, uno de ellos con casco oscuro y guantes.', 1, 2, NULL),
+(32, 11, 'Merodeo', '2025-03-10 09:10:05.345678', 0.65, 'Persona sin hogar revisando basureros con actitud nerviosa.', 2, 1, NULL),
+(33, 12, 'Merodeo', '2025-03-25 22:15:25.890123', 0.82, 'Sujeto vestido completamente de negro, moviéndose lentamente y ocultándose tras árboles.', 0, 1, NULL),
+(34, 13, 'Portonazo', '2025-04-01 11:30:50.456789', 0.96, 'Coche con vidrios polarizados dando vueltas en el mismo bloque por tercera vez.', 1, 2, NULL),
+(35, 1, 'Asalto hogar', '2025-04-20 01:40:10.012345', 0.78, 'Silueta captada trepando el muro perimetral de una propiedad.', 1, 3, NULL),
+(36, 2, 'Merodeo', '2025-05-07 15:50:35.567890', 0.93, 'Adolescente patinando en la calle, pero mirando fijamente hacia las casas.', 0, 1, NULL),
+(37, 3, 'Merodeo', '2025-05-19 06:12:00.112233', 0.87, 'Un individuo con abrigo largo a pesar del clima, hablando por un auricular y apuntando.', 1, 1, NULL),
+(38, 4, 'Portonazo', '2025-06-05 20:25:45.667788', 0.90, 'Cuatro jóvenes en un automóvil blanco con matrículas cubiertas.', 1, 2, NULL),
+(39, 5, 'Asalto hogar', '2025-06-29 02:00:55.998877', 0.70, 'Ruidos fuertes y repetitivos de rotura de vidrios captados por el micrófono de la cámara.', 1, 3, NULL),
+(40, 6, 'Merodeo', '2025-07-14 13:40:20.334455', 0.85, 'Vendedor ambulante deteniéndose por un tiempo inusualmente largo en un punto.', 0, 1, NULL),
+(41, 7, 'Merodeo', '2025-07-30 04:55:10.776655', 0.98, 'Detección de persona inmóvil en el umbral de una puerta por más de 3 minutos.', 1, 1, NULL),
+(42, 8, 'Portonazo', '2025-09-09 19:15:30.221100', 0.68, 'Sospechoso con pasamontañas cerca de un vehículo esperando a entrar a un garaje.', 1, 2, NULL),
+(43, 9, 'Merodeo', '2025-09-22 17:05:05.445566', 0.94, 'Mujer mayor con un bolso de mano grande, observando las cerraduras de las puertas.', 0, 1, NULL),
+(44, 10, 'Asalto hogar', '2025-10-10 00:35:40.889900', 0.76, 'Se activa sensor de movimiento interno y se ve una sombra en la ventana de la cocina.', 1, 3, NULL),
+(45, 11, 'Merodeo', '2025-10-04 21:00:15.112233', 0.89, 'Repartidor de pizza con actitud errática, no entrega pedido y se queda mirando la fachada.', 0, 1, NULL),
+(46, 12, 'Portonazo', '2025-10-12 23:45:50.556677', 0.92, 'SUV negro bloqueando la salida de un coche en la calzada.', 1, 2, NULL),
+(47, 13, 'Merodeo', '2025-10-15 08:08:08.888888', 0.97, 'Hombre con perro pequeño paseando, pero con movimientos rápidos de la cabeza, inspeccionando techos.', 1, 1, NULL);
 
 -- Actualizar las secuencias
-SELECT pg_catalog.setval('public.alertas_id_seq', 27, true);
-SELECT pg_catalog.setval('public.camaras_id_seq', 6, true);
-SELECT pg_catalog.setval('public.sectores_id_seq', 3, true);
+SELECT pg_catalog.setval('public.alertas_id_seq', 47, true);
+SELECT pg_catalog.setval('public.camaras_id_seq', 13, true);
+SELECT pg_catalog.setval('public.sectores_id_seq', 12, true);
 SELECT pg_catalog.setval('public.tipos_alerta_id_seq', 1, false);
 
 INSERT INTO reglas(id, iesgo, tipoAlerta, horaInicio, horaFin, score, sector) VALUES

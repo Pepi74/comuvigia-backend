@@ -304,6 +304,49 @@ router.post('/marcar-vista/:id', verificarToken, verificarRol([1, 2]), async (re
   res.json({ ok: true });
 });
 
+// --- Marcar todas las alertas como vistas ---
+router.post('/marcar-todas-vistas', verificarToken, verificarRol([1, 2]), async (req, res) => {
+  try {
+    const estado = req.body.estado || 1; // Por defecto marcarlas como "Confirmadas"
+
+    // 1. Actualizar en Postgres - marcar todas las alertas no vistas como vistas
+    await pool.query(
+      'UPDATE alertas SET estado = $1 WHERE estado = 0',
+      [estado]
+    );
+
+    // 2. Limpiar el conjunto de alertas no vistas en Redis
+    await redisClient.del('alertas_no_vistas');
+
+    // 3. Actualizar todas las alertas en Redis
+    const todasAlertas = await pool.query('SELECT * FROM alertas ORDER BY hora_suceso DESC LIMIT 100');
+    
+    // Actualizar la lista de últimas alertas
+    await redisClient.del('alertas');
+    if (todasAlertas.rows.length > 0) {
+      await redisClient.lPush('alertas', todasAlertas.rows.map(alert => JSON.stringify(alert)));
+      await redisClient.lTrim('alertas', 0, 99);
+    }
+
+    // 4. Actualizar cada alerta individual en Redis
+    const multi = redisClient.multi();
+    todasAlertas.rows.forEach(alert => {
+      multi.set(`alerta:${alert.id}`, JSON.stringify(alert));
+    });
+    await multi.exec();
+
+    res.json({ 
+      ok: true, 
+      message: `Todas las alertas han sido marcadas como vistas`,
+      alertas_actualizadas: todasAlertas.rows.length
+    });
+
+  } catch (error) {
+    console.error('Error al marcar todas las alertas como vistas:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
 // Modificar estado de alerta
 router.post('/cambiar-estado/:id', verificarToken, verificarRol([1, 2]), async (req, res) => {
   const id = req.params.id;
