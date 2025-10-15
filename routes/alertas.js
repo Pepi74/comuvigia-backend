@@ -41,20 +41,36 @@ router.get('/', verificarToken, verificarRol([1, 2]), async (_, res) => {
 router.post('/nueva-alerta', async (req, res) => {
   try {
     const alerta = req.body;
-    const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, frames,fps } = alerta;
+    const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, estado, frames, fps } = alerta;
 
     // 1. Primero insertar la alerta en la BD
     let result;
-    if (descripcion_suceso) {
-      result = await pool.query(
-        `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso]
-      );
+    if (estado !== undefined && estado !== null) {
+      if (descripcion_suceso) {
+        result = await pool.query(
+          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, estado) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+          [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, estado]
+        );
+      } else {
+        result = await pool.query(
+          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+          [id_camara, mensaje, hora_suceso, tipo, score_confianza, estado]
+        );
+      }
     } else {
-      result = await pool.query(
-        `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-        [id_camara, mensaje, hora_suceso, tipo, score_confianza]
-      );
+      if (descripcion_suceso) {
+        result = await pool.query(
+          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+          [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso]
+        );
+      } else {
+        result = await pool.query(
+          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza)
+           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+          [id_camara, mensaje, hora_suceso, tipo, score_confianza]
+        );
+      }
     }
 
     const nuevaAlerta = result.rows[0];
@@ -65,7 +81,6 @@ router.post('/nueva-alerta', async (req, res) => {
 
     console.log(sector.rows[0].id_sector)
     nuevaAlerta.id_sector = sector.rows[0].id_sector
-
 
     console.log(typeof(frames))
     // 2. Si hay frames, guardarlos en S3 y obtener el key
@@ -119,7 +134,7 @@ router.post('/nueva-alerta', async (req, res) => {
     // 4. Guardar en Redis y emitir WebSocket
     await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
     await redisClient.set(`alerta:${nuevaAlerta.id}`, JSON.stringify(nuevaAlerta));
-    await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
+    if (nuevaAlerta.estado === 0) await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
     await redisClient.lTrim('alertas', 0, 99);
 
     io.emit('nueva-alerta', nuevaAlerta);
