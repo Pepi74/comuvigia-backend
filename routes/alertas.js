@@ -508,11 +508,13 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
         },
         estadisticas_totales: {
           total_alertas: 0,
+          total_alertas_camaras_caidas: 0,
           alertas_confirmadas: 0,
           falsos_positivos: 0,
           merodeos: 0,
           portonazos: 0,
           asaltos_hogar: 0,
+          camaras_caidas: 0,
           no_especificados: 0,
           tasa_confianza: 0
         },
@@ -523,11 +525,13 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
     // Calcular totales
     const totales = {
       total_alertas: 0,
+      total_alertas_camaras_caidas: 0,
       alertas_confirmadas: 0,
       falsos_positivos: 0,
       merodeos: 0,
       portonazos: 0,
       asaltos_hogar: 0,
+      camaras_caidas: 0,
       no_especificados: 0,
       especificadas:0,
 
@@ -538,18 +542,16 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
     
     result.rows.forEach(row => {
       // Totales generales
-      
       totales.total_alertas += parseInt(row.total_alertas) || 0;
+      totales.total_alertas_camaras_caidas += parseInt(row.total_alertas_camaras_caidas) || 0;
       totales.alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
       totales.falsos_positivos += parseInt(row.falsos_positivos) || 0;
       totales.merodeos += parseInt(row.merodeos) || 0;
       totales.portonazos += parseInt(row.portonazos) || 0;
       totales.no_especificados += parseInt(row.no_especificados) || 0;
-      totales.asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
-
-      
-
-
+      totales.asaltos_hogar += parseInt(row.asaltos_hogar) || 0 ;
+      totales.camaras_caidas += parseInt(row.camaras_caidas) || 0 ;
+    
       // Por sector
       const sectorId = row.id_sector;
       if (!sectores[sectorId]) {
@@ -557,22 +559,26 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
           id_sector: sectorId,
           nombre_sector: row.nombre_sector,
           total_alertas: 0,
+          total_alertas_camaras_caidas: 0,
           alertas_confirmadas: 0,
           falsos_positivos: 0,
           merodeos: 0,
           portonazos: 0,
+          asaltos_hogar: 0,
+          camaras_caidas: 0,
           no_especificados: 0,
           especificadas:0,
         };
       }
 
-
       sectores[sectorId].total_alertas += parseInt(row.total_alertas) || 0;
+      sectores[sectorId].total_alertas_camaras_caidas += parseInt(row.total_alertas_camaras_caidas) || 0;
       sectores[sectorId].alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
       sectores[sectorId].falsos_positivos += parseInt(row.falsos_positivos) || 0;
       sectores[sectorId].merodeos += parseInt(row.merodeos) || 0;
       sectores[sectorId].portonazos += parseInt(row.portonazos) || 0;
       sectores[sectorId].asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
+      sectores[sectorId].camaras_caidas += parseInt(row.camaras_caidas) || 0;
       sectores[sectorId].no_especificados += parseInt(row.no_especificados) || 0;
       sectores[sectorId].especificadas += sectores[sectorId].total_alertas - sectores[sectorId].no_especificados
     });

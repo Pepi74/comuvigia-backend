@@ -116,6 +116,7 @@ RETURNS TABLE (
     id_sector INTEGER,  -- Cambiado de SMALLINT a INTEGER
     nombre_sector VARCHAR(100),
     total_alertas BIGINT,
+    total_alertas_camaras_caidas BIGINT,
     camaras_activas BIGINT,
     confianza_promedio NUMERIC,
     alertas_confirmadas BIGINT,
@@ -123,6 +124,7 @@ RETURNS TABLE (
     merodeos BIGINT,
     portonazos BIGINT,
     asaltos_hogar BIGINT,  -- Agregado para tipo 3
+    camaras_caidas BIGINT,  -- Agregado para tipo 4
     no_especificados BIGINT
 )
 LANGUAGE plpgsql
@@ -133,14 +135,18 @@ BEGIN
         DATE_TRUNC(agrupacion, a.hora_suceso) as periodo,
         s.id as id_sector,  -- s.id es INTEGER (SERIAL)
         s.nombre_sector,
-        COUNT(a.id) as total_alertas,
+        SUM(CASE WHEN a.tipo IN (1, 2, 3) THEN 1 ELSE 0 END) as total_alertas,  -- Solo seguridad
+        SUM(CASE WHEN a.tipo = 4 THEN 1 ELSE 0 END) as total_alertas_camaras_caidas,  -- Solo cámaras caídas
         COUNT(DISTINCT c.id) as camaras_activas,
         ROUND(AVG(a.score_confianza), 2) as confianza_promedio,
-        SUM(CASE WHEN a.estado = 1 THEN 1 ELSE 0 END) as alertas_confirmadas,
-        SUM(CASE WHEN a.estado = 2 THEN 1 ELSE 0 END) as falsos_positivos,
+        -- Solo alertas confirmadas de tipo 1, 2 y 3
+        SUM(CASE WHEN a.estado = 1 AND a.tipo IN (1, 2, 3) THEN 1 ELSE 0 END) as alertas_confirmadas,
+        -- Solo falsos positivos de tipo 1, 2 y 3
+        SUM(CASE WHEN a.estado = 2 AND a.tipo IN (1, 2, 3) THEN 1 ELSE 0 END) as falsos_positivos,
         SUM(CASE WHEN a.tipo = 1 THEN 1 ELSE 0 END) as merodeos,
         SUM(CASE WHEN a.tipo = 2 THEN 1 ELSE 0 END) as portonazos,
         SUM(CASE WHEN a.tipo = 3 THEN 1 ELSE 0 END) as asaltos_hogar,
+        SUM(CASE WHEN a.tipo = 4 THEN 1 ELSE 0 END) as camaras_caidas,
         SUM(CASE WHEN a.tipo = 0 THEN 1 ELSE 0 END) as no_especificados
     FROM alertas a
     INNER JOIN camaras c ON a.id_camara = c.id
@@ -450,7 +456,7 @@ SELECT pg_catalog.setval('public.camaras_id_seq', 13, true);
 SELECT pg_catalog.setval('public.sectores_id_seq', 12, true);
 SELECT pg_catalog.setval('public.tipos_alerta_id_seq', 1, false);
 
-INSERT INTO reglas(id, iesgo, tipoAlerta, horaInicio, horaFin, score, sector) VALUES
+INSERT INTO reglas(id, riesgo, tipoAlerta, horaInicio, horaFin, score, sector) VALUES
 (1, 'bajo', '1', '23:59', '23:59', 100, ''),
 (2, 'medio', '2', '23:59', '23:59', 100, ''),
 (3, 'alto', '3', '23:59', '23:59', 100, ''),
