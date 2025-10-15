@@ -53,7 +53,7 @@ router.post('/nueva-alerta', async (req, res) => {
         );
       } else {
         result = await pool.query(
-          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, estado) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
           [id_camara, mensaje, hora_suceso, tipo, score_confianza, estado]
         );
       }
