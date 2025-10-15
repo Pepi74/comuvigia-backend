@@ -423,8 +423,8 @@ SELECT pg_catalog.setval('public.camaras_id_seq', 6, true);
 SELECT pg_catalog.setval('public.sectores_id_seq', 3, true);
 SELECT pg_catalog.setval('public.tipos_alerta_id_seq', 1, false);
 
-INSERT INTO reglas(riesgo, tipoAlerta, horaInicio, horaFin, score, sector) VALUES
-('bajo', '1', '23:59', '23:59', 100, ''),
-('medio', '2', '23:59', '23:59', 100, ''),
-('alto', '3', '23:59', '23:59', 100, ''),
-('critico', '', '00:00', '23:59', 90, '');
+INSERT INTO reglas(id, iesgo, tipoAlerta, horaInicio, horaFin, score, sector) VALUES
+(1, 'bajo', '1', '23:59', '23:59', 100, ''),
+(2, 'medio', '2', '23:59', '23:59', 100, ''),
+(3, 'alto', '3', '23:59', '23:59', 100, ''),
+(4, 'critico', '', '00:00', '23:59', 90, '');

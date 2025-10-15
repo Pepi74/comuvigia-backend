@@ -58,6 +58,15 @@ router.post('/nueva-alerta', async (req, res) => {
     }
 
     const nuevaAlerta = result.rows[0];
+
+    const sector = await pool.query(
+      "SELECT id_sector FROM camaras WHERE id = $1", [id_camara]
+    )
+
+    console.log(sector.rows[0].id_sector)
+    nuevaAlerta.id_sector = sector.rows[0].id_sector
+
+
     console.log(typeof(frames))
     // 2. Si hay frames, guardarlos en S3 y obtener el key
     if (frames && frames.length > 0) {
