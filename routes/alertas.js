@@ -46,16 +46,16 @@ router.post('/nueva-alerta', async (req, res) => {
     // 1. Primero insertar la alerta en la BD
     let result;
     if (estado !== undefined && estado !== null) {
-      estado = parseInt(estado);
+      const status = parseInt(estado);
       if (descripcion_suceso) {
         result = await pool.query(
           `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, estado) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-          [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, estado]
+          [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, status]
         );
       } else {
         result = await pool.query(
           `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, estado) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-          [id_camara, mensaje, hora_suceso, tipo, score_confianza, estado]
+          [id_camara, mensaje, hora_suceso, tipo, score_confianza, status]
         );
       }
     } else {
