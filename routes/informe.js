@@ -251,13 +251,13 @@ async function generarGraficoComoImagen(tipo, datos, ancho = 1000, alto = 600) {
           labels: [
             'Merodeos',
             'Portonazos',
-            'Asaltos Hogar'
+            'Asaltos Hogar',
           ],
           datasets: [{
             data: [
               datos.estadisticas_totales.merodeos,
               datos.estadisticas_totales.portonazos,
-              datos.estadisticas_totales.asaltos_hogar
+              datos.estadisticas_totales.asaltos_hogar,
             ],
             backgroundColor: coloresGraficos.primario,
             borderColor: '#fff',
@@ -271,6 +271,16 @@ async function generarGraficoComoImagen(tipo, datos, ancho = 1000, alto = 600) {
               display: true,
               text: 'Distribución de Tipos de Alertas',
               font: { size: 28, weight: 'bold' } // 🔹 Más grande
+            },
+            legend: {
+              position: 'bottom',
+              labels: {
+                font: { size: 18 }, // 🔹 Aumentado
+                usePointStyle: true,
+                boxWidth: 18,
+                padding: 20
+              },
+              display: false
             }
           }
         }
