@@ -770,83 +770,101 @@ class VideoStream:
         logger.info(f"⏰ Timer batch iniciado para cámara {self.camera_id} - Intervalo: {self.batch_interval}s")
 
     def update(self):
-        """Loop principal con conexión directa RTSP"""
+        """Loop principal con diagnóstico detallado"""
         last_publish_time = 0
+        last_batch_check = time.time()
         MAX_PUBLISH_FPS = 15
+        BATCH_CHECK_INTERVAL = 60
+        
+        frame_count = 0
+        empty_frame_count = 0
         
         while self.running:
             try:
                 if self.disabled:
+                    logger.info(f"Cámara {self.camera_id}: Deshabilitada, esperando...")
                     time.sleep(5)
                     continue
 
-                # ✅ CONEXIÓN DIRECTA RTSP
+                # ✅ DIAGNÓSTICO DE CONEXIÓN
                 if not self.is_capture_active():
-                    logger.info(f"Cámara {self.camera_id}: Conectando directo RTSP...")
+                    logger.warning(f"Cámara {self.camera_id}: Captura inactiva, reconectando...")
                     success = self.connect_direct_rtsp()
                     if not success:
+                        logger.error(f"Cámara {self.camera_id}: Reconexión fallida")
                         time.sleep(2)
                         continue
+                    else:
+                        logger.info(f"Cámara {self.camera_id}: Reconexión exitosa")
                 
-                # Capturar frame DIRECTAMENTE del RTSP
+                # ✅ CAPTURAR FRAME CON DIAGNÓSTICO
                 ret, frame = self.cap.read()
                 if not ret:
-                    logger.warning(f"Cámara {self.camera_id}: Frame vacío directo")
-                    self.reconnect_direct()
+                    empty_frame_count += 1
+                    logger.warning(f"Cámara {self.camera_id}: Frame vacío (#{empty_frame_count})")
+                    if empty_frame_count >= 5:
+                        logger.error(f"Cámara {self.camera_id}: Demasiados frames vacíos, reconectando...")
+                        self.reconnect_direct()
+                        empty_frame_count = 0
                     time.sleep(1)
                     continue
-                #logger.info(f"Cámara {self.camera_id}: Frame capturado - Shape: {frame.shape}, Tipo: {type(frame)}")
-               
-                # ✅ RESETEAR CONTADOR SI LA CAPTURA ES EXITOSA
-                if self.reconnect_attempts > 0:
-                    self.reconnect_attempts = 0
-                    self.alert_sent = False
-                    self.socketio_manager.send_camera_status(
-                        self.camera_id, 
-                        'active',
-                        {'reason': 'connection_restored'}
-                    )
-
-                camera_id_int = self.camera_id
                 
-                # Publicar a RabbitMQ
+                # ✅ RESETEAR CONTADOR DE FRAMES VACÍOS
+                empty_frame_count = 0
+                frame_count += 1
+                
+                # ✅ VERIFICAR FRAME CAPTURADO
+                if frame is None:
+                    logger.error(f"Cámara {self.camera_id}: Frame es None después de cap.read()")
+                    continue
+                    
+                if frame.size == 0:
+                    logger.error(f"Cámara {self.camera_id}: Frame vacío (size=0)")
+                    continue
+                
+                logger.info(f"✅ Cámara {self.camera_id}: Frame #{frame_count} capturado - Shape: {frame.shape}")
+
+                # ✅ PROCESAR FRAME
+                try:
+                    processed_frame = cv2.resize(frame, DEFAULT_OUTPUT_SIZE)
+                    logger.info(f"✅ Cámara {self.camera_id}: Frame procesado - {processed_frame.shape}")
+                except Exception as e:
+                    logger.error(f"Cámara {self.camera_id}: Error en resize: {str(e)}")
+                    continue
+
+                # ✅ ACTUALIZAR BUFFER Y FRAME PRINCIPAL
+                with self.buffer_lock:
+                    try:
+                        # Agregar al buffer
+                        self.frames_buffer.append(processed_frame)
+                        self.buffer_timestamps.append(time.time())
+                        
+                        # ✅ ESTABLECER self.frame (CRÍTICO)
+                        self.frame = processed_frame
+                        
+                        # Diagnóstico cada 10 frames
+                        if frame_count % 10 == 0:
+                            buffer_size = len(self.frames_buffer)
+                            logger.info(f"📊 Cámara {self.camera_id}: "
+                                    f"Frame #{frame_count}, Buffer: {buffer_size}, "
+                                    f"self.frame: {'SET' if self.frame is not None else 'MISSING'}")
+                            
+                    except Exception as e:
+                        logger.error(f"Cámara {self.camera_id}: Error actualizando buffer: {str(e)}")
+
+                # ✅ PUBLICAR A RABBITMQ
                 current_time = time.time()
                 if current_time - last_publish_time >= 1.0 / MAX_PUBLISH_FPS:
-                    _, jpeg_buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-                    jpeg_bytes = jpeg_buffer.tobytes()
-                    publisher.publish_frame(camera_id_int, jpeg_bytes)
-                    last_publish_time = current_time
-                
-                # Buffer para batches
-                processed_frame = cv2.resize(frame, DEFAULT_OUTPUT_SIZE)
-                frame_time = time.time()
-                
-                with self.buffer_lock:
-                    self.frames_buffer.append(processed_frame)
-                    self.buffer_timestamps.append(frame_time)
-                    self.frame = processed_frame
-                
-                # Monitoreo FPS
-                current_time = time.time()
-                if hasattr(self, 'last_frame_time'):
-                    frame_interval = current_time - self.last_frame_time
-                    if frame_interval > 0:
-                        current_fps = 1 / frame_interval
-                        self.fps_win.append(current_fps)
-                        '''if current_fps < MAX_FPS * 0.5:
-                            logger.warning(f"Cámara {self.camera_id}: FPS bajo: {current_fps:.1f}")'''
-                
-                self.last_frame_time = current_time
+                    try:
+                        _, jpeg_buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                        jpeg_bytes = jpeg_buffer.tobytes()
+                        publisher.publish_frame(self.camera_id, jpeg_bytes)
+                        last_publish_time = current_time
+                        logger.debug(f"Cámara {self.camera_id}: Frame publicado a RabbitMQ")
+                    except Exception as e:
+                        logger.error(f"Cámara {self.camera_id}: Error publicando a RabbitMQ: {str(e)}")
 
-                # Log de promedio cada ~10s
-                if current_time - self.last_fps_log > 10:
-                    if len(self.fps_win) > 10:
-                        avg_fps = sum(self.fps_win) / len(self.fps_win)
-                        if avg_fps < MAX_FPS * 0.5:
-                            logger.warning(f"Cámara {self.camera_id}: FPS bajo promedio: {avg_fps:.1f}")
-                    self.last_fps_log = current_time
-
-                # Control FPS
+                # ✅ CONTROL DE VELOCIDAD
                 elapsed = time.time() - start_time
                 target_frame_time = 1.0 / MAX_FPS
                 sleep_time = max(0, target_frame_time - elapsed)
@@ -854,7 +872,7 @@ class VideoStream:
                     time.sleep(sleep_time)
                             
             except Exception as e:
-                logger.error(f"Cámara {self.camera_id}: Error en captura directa: {str(e)}")
+                logger.error(f"Cámara {self.camera_id}: Error en loop principal: {str(e)}")
                 time.sleep(2)
     
     def connect_direct_rtsp(self):
