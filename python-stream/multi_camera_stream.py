@@ -26,6 +26,7 @@ import os
 import base64
 import hashlib
 import tempfile
+import traceback
 import subprocess, shlex
 import queue
 from flask import Flask, Response, jsonify, request
@@ -52,6 +53,7 @@ class SocketIOClientManager:
         self.video_streams_ref = None
         self.reconnect_attempts = 0
         self.max_reconnect_attempts = 10
+        self._camera_locks = {}
         
     def set_video_streams(self, video_streams):
         self.video_streams_ref = video_streams
@@ -62,6 +64,107 @@ class SocketIOClientManager:
         thread.start()
         logger.info("Cliente Socket.IO iniciado")
      
+    def get_camera_lock(self, camera_id):
+        """Obtener lock único por cámara"""
+        if camera_id not in self._camera_locks:
+            self._camera_locks[camera_id] = threading.RLock()
+        return self._camera_locks[camera_id]
+
+    def on_camera_update(self, data):
+        """Manejar actualizaciones de cámaras desde Backend Node.js"""
+        logger.info(f"📡 Socket.IO: Actualización de cámara recibida - {data}")
+        # No se crea un Thread adicional
+        self._handle_camera_update_from_backend(data)
+
+    def _handle_camera_update_from_backend(self, data):
+        """Manejar actualización de cámara desde Node.js - CON DEBUG Y LOCK"""
+        try:
+            action = data.get('action')
+            camera_data = data.get('camera')
+            camera_id = camera_data.get('id')
+            
+            logger.info(f"📡 Socket.IO: Actualización de cámara recibida - {data}")
+            
+            # Convertir camera_id a int
+            try:
+                camera_id_int = int(camera_id)
+            except (ValueError, TypeError):
+                logger.error(f"❌ Socket.IO: ID de cámara inválido: {camera_id}")
+                return
+            
+            logger.info(f"🔄 Socket.IO: Procesando {action} cámara {camera_id_int}")
+            
+            # Lock
+            camera_lock = self.get_camera_lock(camera_id_int)
+            with camera_lock:
+                self._process_camera_update_safe(camera_id_int, action, camera_data)
+                
+        except Exception as e:
+            logger.error(f"❌ Socket.IO: Error procesando actualización de cámara: {e}")
+            logger.error(f"❌ Stack trace: {traceback.format_exc()}")
+
+    def _process_camera_update_safe(self, camera_id_int, action, camera_data):
+        """Procesar actualización de cámara de manera thread-safe"""
+        # Buscar la cámara en cameras_data
+        camara_encontrada = None
+        for camara in cameras_data:
+            if camara["id"] == camera_id_int:
+                camara_encontrada = camara
+                break
+        
+        # DEBUG
+        logger.info(f"🔍 Cámara encontrada en cameras_data: {camara_encontrada is not None}")
+        logger.info(f"🔍 Estado anterior: {camara_encontrada.get('estado_camara') if camara_encontrada else 'N/A'}")
+        logger.info(f"🔍 Estado nuevo: {camera_data.get('estado_camara')}")
+        logger.info(f"🔍 Link cámara: {camera_data.get('link_camara')}")
+        logger.info(f"🔍 En video_streams: {camera_id_int in video_streams}")
+        
+        if action == 'create':
+            # AGREGAR a cameras_data y manejar stream
+            if camara_encontrada is None:
+                cameras_data.append(camera_data)
+                camara_encontrada = camera_data
+            
+            # Iniciar stream si está activa
+            if camera_data.get('estado_camara') and camera_data.get('link_camara'):
+                logger.info(f"🚀 Iniciando stream para nueva cámara {camera_id_int}")
+                manejar_stream_camara(camera_id_int, True, False, camera_data)
+            else:
+                logger.info(f"⏸️ Cámara {camera_id_int} creada pero inactiva o sin link")
+                
+        elif action == 'update':
+            if camara_encontrada:
+                estado_anterior = camara_encontrada.get("estado_camara")
+                estado_nuevo = camera_data.get('estado_camara')
+                
+                logger.info(f"🔄 Actualizando cámara {camera_id_int}: {estado_anterior} -> {estado_nuevo}")
+                
+                # Actualizar datos en cameras_data
+                for key, value in camera_data.items():
+                    actualizar_por_id(cameras_data, camera_id_int, key, value)
+                
+                # Actualizar si cambia de estado
+                if estado_anterior != estado_nuevo:
+                    logger.info(f"🎛️ Cambio de estado detectado: {estado_anterior} -> {estado_nuevo}")
+                    manejar_stream_camara(camera_id_int, estado_nuevo, estado_anterior, camera_data)
+                else:
+                    logger.info("ℹ️ Sin cambio de estado, omitiendo manejo de stream")
+                    
+            logger.info(f"✅ Socket.IO: Cámara {camera_id_int} actualizada")
+            
+        elif action == 'delete':
+            # ELIMINAR de cameras_data y detener stream
+            if camara_encontrada:
+                cameras_data[:] = [cam for cam in cameras_data if cam["id"] != camera_id_int]
+            # Detener stream
+            if camera_id_int in video_streams:
+                logger.info(f"🛑 Deteniendo stream cámara {camera_id_int}")
+                detener_camara_simple(camera_id_int)
+            logger.info(f"🗑️ Socket.IO: Cámara {camera_id_int} eliminada")
+            
+        else:
+            logger.warning(f"⚠️ Socket.IO: Acción no reconocida: {action}")
+
     def _connect_loop(self):
         """Loop principal de conexión"""
         while True:
@@ -78,7 +181,8 @@ class SocketIOClientManager:
                 sio.on('disconnect', self.on_disconnect)
                 sio.on('camera_status_update', self.on_camera_status_update)
                 sio.on('camera_control', self.on_camera_control)
-                
+                sio.on('camera-update', self.on_camera_update)
+
                 # Conectar con timeout
                 sio.connect(
                     SOCKETIO_BACKEND_URL,
@@ -822,12 +926,12 @@ class VideoStream:
                     logger.error(f"Cámara {self.camera_id}: Frame vacío (size=0)")
                     continue
                 
-                logger.info(f"✅ Cámara {self.camera_id}: Frame #{frame_count} capturado - Shape: {frame.shape}")
+                #logger.info(f"✅ Cámara {self.camera_id}: Frame #{frame_count} capturado - Shape: {frame.shape}")
 
                 # ✅ PROCESAR FRAME
                 try:
                     processed_frame = cv2.resize(frame, DEFAULT_OUTPUT_SIZE)
-                    logger.info(f"✅ Cámara {self.camera_id}: Frame procesado - {processed_frame.shape}")
+                    #logger.info(f"✅ Cámara {self.camera_id}: Frame procesado - {processed_frame.shape}")
                 except Exception as e:
                     logger.error(f"Cámara {self.camera_id}: Error en resize: {str(e)}")
                     continue
@@ -842,8 +946,8 @@ class VideoStream:
                         # ✅ ESTABLECER self.frame (CRÍTICO)
                         self.frame = processed_frame
                         
-                        # Diagnóstico cada 10 frames
-                        if frame_count % 10 == 0:
+                        # Diagnóstico cada 100 frames
+                        if frame_count % 100 == 0:
                             buffer_size = len(self.frames_buffer)
                             logger.info(f"📊 Cámara {self.camera_id}: "
                                     f"Frame #{frame_count}, Buffer: {buffer_size}, "
@@ -1332,13 +1436,19 @@ def generate_frames(camera_id):
         return
     
     if camera_id_int not in video_streams:
+        logger.warning(f"🎥 Cámara {camera_id_int} no encontrada en video_streams")
         yield error_frame("Camera not found")
         return
         
     stream = video_streams[camera_id_int]
     last_time = time.time()
-    
+    frame_count = 0
     while True:
+        # Verificacion periodica de que el stream sigue activo
+        if camera_id_int not in video_streams or not stream.running or stream.disabled:
+            logger.info(f"🎥 Stream cámara {camera_id_int} finalizado")
+            yield error_frame("Stream ended")
+            break
         frame = stream.get_frame()
         if frame:
             yield (b'--frame\r\n'
@@ -1347,6 +1457,10 @@ def generate_frames(camera_id):
             delay = max(0, (1/MAX_FPS) - elapsed)
             time.sleep(delay)
             last_time = time.time()
+            # Log cada 100 frames para debugging
+            frame_count += 1
+            if frame_count % 100 == 0:
+                logger.debug(f"🎥 Cámara {camera_id_int} - Frames enviados: {frame_count}")
         else:
             yield error_frame("No signal")
             time.sleep(1)
@@ -1363,6 +1477,32 @@ def error_frame(message):
 def video_feed(camera_id):
     return Response(generate_frames(camera_id),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/video_feed/<camera_id>/status')
+def video_feed_status(camera_id):
+    """Verificar si un stream está activo"""
+    try:
+        camera_id_int = int(camera_id)
+        status = {
+            "camera_id": camera_id_int,
+            "in_video_streams": camera_id_int in video_streams,
+            "stream_active": False,
+            "stream_running": False,
+            "stream_disabled": False
+        }
+        
+        if camera_id_int in video_streams:
+            stream = video_streams[camera_id_int]
+            status.update({
+                "stream_active": True,
+                "stream_running": stream.running,
+                "stream_disabled": stream.disabled,
+                "has_capture": stream.cap is not None and stream.cap.isOpened() if hasattr(stream, 'cap') else False
+            })
+        
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/cameras')
 def list_cameras():
@@ -1774,10 +1914,13 @@ def enable_camera(camera_id):
 
 def manejar_stream_camara(camera_id, nuevo_estado, estado_anterior, camara_config):
     """
-    Maneja el inicio/detención del stream según el estado de la cámara
+    Maneja el inicio/detención del stream según el estado de la cámara - CON DEBUG
     """
     try:
+        logger.info(f"🎛️ MANEJAR_STREAM: Cámara {camera_id}, Estado: {estado_anterior} -> {nuevo_estado}")
+        
         if estado_anterior == nuevo_estado:
+            logger.info(f"ℹ️ Sin cambio de estado, omitiendo")
             return
         
         logger.info(f"🔄 Cámara {camera_id}: {estado_anterior} -> {nuevo_estado}")
@@ -1796,19 +1939,27 @@ def manejar_stream_camara(camera_id, nuevo_estado, estado_anterior, camara_confi
             args=(camera_id, nuevo_estado, camara_config),
             daemon=True
         ).start()
+        
+        logger.info(f"✅ Thread iniciado para cámara {camera_id}")
             
     except Exception as e:
         logger.error(f"❌ Error manejando cámara {camera_id}: {str(e)}")
+        logger.error(f"❌ Stack trace: {traceback.format_exc()}")
 
 def procesar_camara_simple(camera_id, nuevo_estado, camara_config):
-    """Procesamiento simple y robusto de cámara"""
+    """Procesamiento simple y robusto de cámara - CON DEBUG"""
     try:
+        logger.info(f"🔧 PROCESAR_CAMARA: Cámara {camera_id}, Estado: {nuevo_estado}")
+        
         if not nuevo_estado:
+            logger.info(f"🛑 Deteniendo cámara {camera_id}")
             detener_camara_simple(camera_id)
         else:
+            logger.info(f"🚀 Activando cámara {camera_id}")
             activar_camara_simple(camera_id, camara_config)
     except Exception as e:
         logger.error(f"❌ Error procesando cámara {camera_id}: {e}")
+        logger.error(f"❌ Stack trace: {traceback.format_exc()}")
 
 def activar_camara_simple(camera_id, camara_config):
     """Activar cámara de manera simple y robusta"""
@@ -1882,9 +2033,23 @@ def detener_camara_simple(camera_id):
             if hasattr(stream, 'cap') and stream.cap:
                 stream.cap.release()
                 stream.cap = None
+
+            # Detener timer de batch
+            if hasattr(stream, 'batch_timer') and stream.batch_timer:
+                stream.batch_timer = None
             
-            logger.info(f"✅ Cámara {camera_id} detenida")
+            # Limpiar buffers
+            with stream.buffer_lock:
+                stream.frames_buffer.clear()
+                stream.buffer_timestamps.clear()
+                stream.frame = None
             
+            # Remover del diccionario global
+            del video_streams[camera_id]
+            
+            logger.info(f"✅ Cámara {camera_id} detenida y removida de video_stream")
+        else:
+            logger.info(f"Cámara {camera_id} no encontrada en video_streams") 
     except Exception as e:
         logger.error(f"❌ Error deteniendo cámara {camera_id}: {e}")
 
