@@ -136,19 +136,31 @@ class SocketIOClientManager:
             if camara_encontrada:
                 estado_anterior = camara_encontrada.get("estado_camara")
                 estado_nuevo = camera_data.get('estado_camara')
+                link_anterior = camara_encontrada.get("link_camara")
+                link_nuevo = camera_data.get('link_camara')
                 
-                logger.info(f"🔄 Actualizando cámara {camera_id_int}: {estado_anterior} -> {estado_nuevo}")
+                logger.info(f"🔄 Actualizando cámara {camera_id_int}")
+                logger.info(f"🔍 Estado: {estado_anterior} -> {estado_nuevo}")
+                logger.info(f"🔍 Link: {link_anterior} -> {link_nuevo}")
                 
                 # Actualizar datos en cameras_data
                 for key, value in camera_data.items():
                     actualizar_por_id(cameras_data, camera_id_int, key, value)
+
+                cambio_de_link = link_anterior != link_nuevo and link_nuevo is not None
+
+                # Actualizar si cambia de estado o cambia el link
+                if estado_anterior != estado_nuevo or cambio_de_link:
+                    logger.info(f"🎛️ Cambios detectados - Estado: {estado_anterior != estado_nuevo}, Link: {cambio_de_link}")
+                    
+                    if cambio_de_link:
+                        logger.info(f"🔄 Cambio de URL detectado para cámara {camera_id_int}")
+                        logger.info(f"📹 URL anterior: {link_anterior}")
+                        logger.info(f"📹 URL nueva: {link_nuevo}")
                 
-                # Actualizar si cambia de estado
-                if estado_anterior != estado_nuevo:
-                    logger.info(f"🎛️ Cambio de estado detectado: {estado_anterior} -> {estado_nuevo}")
                     manejar_stream_camara(camera_id_int, estado_nuevo, estado_anterior, camera_data)
                 else:
-                    logger.info("ℹ️ Sin cambio de estado, omitiendo manejo de stream")
+                    logger.info("ℹ️ Sin cambios relevantes, omitiendo manejo de stream")
                     
             logger.info(f"✅ Socket.IO: Cámara {camera_id_int} actualizada")
             
@@ -1918,9 +1930,25 @@ def manejar_stream_camara(camera_id, nuevo_estado, estado_anterior, camara_confi
     """
     try:
         logger.info(f"🎛️ MANEJAR_STREAM: Cámara {camera_id}, Estado: {estado_anterior} -> {nuevo_estado}")
-        
-        if estado_anterior == nuevo_estado:
-            logger.info(f"ℹ️ Sin cambio de estado, omitiendo")
+        logger.info(f"🔗 Link cámara: {camara_config.get('link_camara')}")
+
+        # Verificar stream existente
+        stream_existente = camera_id in video_streams
+        link_actual = None
+        if stream_existente:
+            link_actual = video_streams[camera_id].link_camara
+            link_nuevo = camara_config.get('link_camara')
+            cambio_url = link_actual != link_nuevo and link_nuevo is not None
+
+        if stream_existente and cambio_url:
+            logger.info(f"🔄 Cambio de URL detectado - Reiniciando stream cámara {camera_id}")
+            logger.info(f"📹 URL actual: {link_actual}")
+            logger.info(f"📹 URL nueva: {link_nuevo}")
+            # Detener stream existente
+            detener_camara_simple(camera_id)
+
+        if estado_anterior == nuevo_estado and not cambio_url:
+            logger.info(f"ℹ️ Sin cambio de estado ni URL, omitiendo")
             return
         
         logger.info(f"🔄 Cámara {camera_id}: {estado_anterior} -> {nuevo_estado}")
@@ -1930,13 +1958,13 @@ def manejar_stream_camara(camera_id, nuevo_estado, estado_anterior, camara_confi
         socketio_manager.send_camera_status(
             camera_id, 
             status_str,
-            {'reason': 'state_change'}
+            {'reason': 'state_change', 'url_changed': cambio_url if stream_existente else False}
         )
         
         # Iniciar thread para manejo simple
         threading.Thread(
             target=procesar_camara_simple,
-            args=(camera_id, nuevo_estado, camara_config),
+            args=(camera_id, nuevo_estado, camara_config, cambio_url if stream_existente else False),
             daemon=True
         ).start()
         
@@ -1946,11 +1974,11 @@ def manejar_stream_camara(camera_id, nuevo_estado, estado_anterior, camara_confi
         logger.error(f"❌ Error manejando cámara {camera_id}: {str(e)}")
         logger.error(f"❌ Stack trace: {traceback.format_exc()}")
 
-def procesar_camara_simple(camera_id, nuevo_estado, camara_config):
+def procesar_camara_simple(camera_id, nuevo_estado, camara_config, cambio_url=False):
     """Procesamiento simple y robusto de cámara - CON DEBUG"""
     try:
-        logger.info(f"🔧 PROCESAR_CAMARA: Cámara {camera_id}, Estado: {nuevo_estado}")
-        
+        logger.info(f"🔧 PROCESAR_CAMARA: Cámara {camera_id}, Estado: {nuevo_estado}, CambioURL: {cambio_url}")
+
         if not nuevo_estado:
             logger.info(f"🛑 Deteniendo cámara {camera_id}")
             detener_camara_simple(camera_id)
@@ -1961,15 +1989,27 @@ def procesar_camara_simple(camera_id, nuevo_estado, camara_config):
         logger.error(f"❌ Error procesando cámara {camera_id}: {e}")
         logger.error(f"❌ Stack trace: {traceback.format_exc()}")
 
-def activar_camara_simple(camera_id, camara_config):
+def activar_camara_simple(camera_id, camara_config, cambio_url=False):
     """Activar cámara de manera simple y robusta"""
     try:
-        logger.info(f"🚀 Activando cámara {camera_id} (simple)")
+        logger.info(f"🚀 Activando cámara {camera_id} (simple), CambioURL: {cambio_url}")
         
+        link_camara = camara_config.get("link_camara")
+        logger.info(f"🔗 URL a conectar: {link_camara}")
+
+        # Si hay cambio de URL forzar nueva instancia
+        if cambio_url and camera_id in video_streams:
+            logger.info(f"🔄 Forzando nueva instancia por cambio de URL para cámara {camera_id}")
+            detener_camara_simple(camera_id)
+
         # Crear o obtener stream
         if camera_id not in video_streams:
-            video_streams[camera_id] = VideoStream(camera_id, camara_config.get("link_camara"))
+            video_streams[camera_id] = VideoStream(camera_id, link_camara)
             video_streams[camera_id].socketio_manager = socketio_manager
+            logger.info(f"✅ Nueva instancia de VideoStream creada para cámara {camera_id}")
+        else:
+            video_streams[camera_id].link_camara = link_camara
+            logger.info(f"✅ URL actualizada en stream existente para cámara {camera_id}")
         
         stream = video_streams[camera_id]
         
@@ -1983,29 +2023,37 @@ def activar_camara_simple(camera_id, camara_config):
         success = stream.connect_direct_rtsp()
         
         if success:
-            # Iniciar el thread principal
-            stream.thread = Thread(target=stream.update, daemon=True)
-            stream.thread.start()
-            logger.info(f"✅ Cámara {camera_id} iniciada con RTSP directo")
+            # Iniciar/Reiniciar el thread principal
+            if stream.thread is None or not stream.thread.is_alive():
+                stream.thread = Thread(target=stream.update, daemon=True)
+                stream.thread.start()
+                logger.info(f"✅ Nuevo thread iniciado para cámara {camera_id}")
+            else:
+                logger.info(f"ℹ️ Thread ya activo para cámara {camera_id}")
         else:
             logger.error(f"❌ Cámara {camera_id}: No se pudo conectar RTSP directo")
         
-        # Inicializar segmenter si no existe
-        if stream.segmenter is None:
+        # Iniciar/Reiniciar segmenter si no existe
+        if cambio_url or stream.segmenter is None:
+            if stream.segmenter:
+                stream.segmenter.stop()
             stream.segmenter = FFmpegSegmenter(
                 camera_id, 
-                camara_config.get("link_camara"), 
+                link_camara, 
                 seg_seconds=BATCH_INTERVAL
             )
+            logger.info(f"✅ Segmenter reinicializado para cámara {camera_id}")
         
-        # Iniciar FFmpeg con timeout
-        stream.segmenter.start()
+        # Iniciar FFmpeg
+        if stream.segmenter.proc is None or stream.segmenter.proc.poll() is not None:
+            stream.segmenter.start()
+            logger.info(f"✅ FFmpeg iniciado/reiniciado para cámara {camera_id}")
         
         # Confirmar estado final
         socketio_manager.send_camera_status(
             camera_id, 
             'active' if success else 'inactive',
-            {'reason': 'stream_ready'}
+            {'reason': 'stream_ready', 'url_changed': cambio_url}
         )
         
     except Exception as e:
@@ -2013,7 +2061,7 @@ def activar_camara_simple(camera_id, camara_config):
         socketio_manager.send_camera_status(
             camera_id, 
             'error',
-            {'reason': 'activation_error', 'error': str(e)}
+            {'reason': 'activation_error', 'error': str(e), 'url_changed': cambio_url}
         )
 
 def detener_camara_simple(camera_id):
