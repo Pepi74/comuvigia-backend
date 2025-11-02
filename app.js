@@ -26,8 +26,7 @@ const io = new Server(httpServer, {
   },
 });
 
-// Exportamos `io` para usarlo en otras partes
-export { io, controlCamera, updateCameraStatus };
+export { io, controlCamera, updateCameraStatus, notifyFlaskCameraUpdate };
 
 app.use(cors({
   origin: process.env.FRONTEND_URL,
@@ -103,6 +102,20 @@ function updateCameraStatus(cameraId, status, config = null) {
     timestamp: Date.now()
   });
 }
+
+function notifyFlaskCameraUpdate(action, cameraData) {
+  try {
+    io.emit('camera-update', {
+      action: action,
+      camera: cameraData,
+      timestamp: new Date().toISOString()
+    });
+    console.log(`📡 Notificación a Python-Stream: ${action} cámara ${cameraData.id}`);
+  } catch (error) {
+    console.error('Error notificando a Python-Stream:', error);
+  }
+}
+
 
 const PORT = process.env.PORT
 httpServer.listen(PORT, () => {
