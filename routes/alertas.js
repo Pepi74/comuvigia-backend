@@ -475,7 +475,7 @@ router.get('/camara/:id_camara', verificarToken, verificarRol([1, 2]), async (re
   }
 })
 
-router.get('/historial-filtro', async (req,res) => {
+router.get('/historial-filtro',verificarToken, verificarRol([1, 2]), async (req,res) => {
   try {
     const {
       q = '',
@@ -525,7 +525,7 @@ router.get('/historial-filtro', async (req,res) => {
   }
 });
 
-router.get('/estadisticas-camara', async (req, res) => {
+router.get('/estadisticas-camara',verificarToken, verificarRol([1, 2]), async (req, res) => {
   let client;
   try {
     const { dias = 7, fecha_inicio, fecha_fin, group, id_camara } = req.query;
