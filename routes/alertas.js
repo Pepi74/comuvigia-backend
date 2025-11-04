@@ -475,6 +475,160 @@ router.get('/camara/:id_camara', verificarToken, verificarRol([1, 2]), async (re
   }
 })
 
+router.get('/historial-filtro', async (req,res) => {
+  try {
+    const {
+      q = '',
+      camaraId,
+      fields = 'id,descripcion_suceso,mensaje',
+      mode = 'or',
+    } = req.query;
+
+    const keywords = q.trim().toLowerCase();
+    const words = keywords.split(/\s+/).filter(Boolean);
+    const fieldList = fields.split(',').map(f => f.trim()).filter(Boolean);
+
+    if (words.length === 0 || fieldList.length === 0) {
+      return res.json([]);
+    }
+
+    const params = [];
+    const conditions = [];
+
+    // 🔢 contador para los placeholders $1, $2, ...
+    let paramIndex = 1;
+
+    for (const field of fieldList) {
+      const wordConditions = words.map(word => {
+        params.push(`%${word}%`);
+        return `LOWER(CAST(${field} AS TEXT)) LIKE $${paramIndex++}`;
+
+      });
+      conditions.push(`(${wordConditions.join(mode === 'or' ? ' OR ' : ' AND ')})`);
+    }
+
+    let sql = `SELECT * FROM alertas WHERE ${conditions.join(' OR ')}`;
+
+    if (camaraId) {
+      params.push(camaraId);
+      sql += ` AND id_camara = $${paramIndex++}`;
+    }
+
+    console.log('SQL generado:', sql);
+    console.log('Params:', params);
+
+    const { rows } = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error en /buscar:', err);
+    res.status(500).json({ error: 'Error al buscar alertas' });
+  }
+});
+
+router.get('/estadisticas-camara', async (req, res) => {
+  let client;
+  try {
+    const { dias = 7, fecha_inicio, fecha_fin, group, id_camara } = req.query;
+
+    if (!id_camara) {
+      return res.status(400).json({ success: false, error: 'Debe especificar id_camara' });
+    }
+
+    let startDate, endDate;
+
+    if (fecha_inicio && fecha_fin) {
+      startDate = new Date(fecha_inicio);
+      endDate = new Date(fecha_fin);
+    } else {
+      endDate = new Date();
+      startDate = new Date();
+      startDate.setDate(endDate.getDate() - parseInt(dias));
+    }
+
+    const fechaInicioStr = startDate.toISOString().replace('T', ' ').substring(0, 19);
+    const fechaFinStr = endDate.toISOString().replace('T', ' ').substring(0, 19);
+
+    const gruposValidos = ['day', 'week', 'month'];
+    const grupo = gruposValidos.includes(group) ? group : 'day';
+
+    client = await pool.connect();
+
+    const query = `SELECT * FROM reporte_alertas_por_camara($1, $2, $3, $4)`;
+    const result = await client.query(query, [fechaInicioStr, fechaFinStr, grupo, parseInt(id_camara)]);
+
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        periodo: {
+          fecha_inicio: fechaInicioStr,
+          fecha_fin: fechaFinStr,
+          dias: Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)),
+        },
+        estadisticas_totales: {
+          total_alertas: 0,
+          alertas_confirmadas: 0,
+          falsos_positivos: 0,
+          merodeos: 0,
+          portonazos: 0,
+          asaltos_hogar: 0,
+          no_especificados: 0,
+          confianza_promedio: 0,
+        },
+        periodos: []
+      });
+    }
+
+    // Calcular totales generales
+    const totales = {
+      total_alertas: 0,
+      alertas_confirmadas: 0,
+      falsos_positivos: 0,
+      merodeos: 0,
+      portonazos: 0,
+      asaltos_hogar: 0,
+      no_especificados: 0,
+      confianza_promedio: 0,
+    };
+
+    result.rows.forEach(row => {
+      totales.total_alertas += parseInt(row.total_alertas) || 0;
+      totales.alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
+      totales.falsos_positivos += parseInt(row.falsos_positivos) || 0;
+      totales.merodeos += parseInt(row.merodeos) || 0;
+      totales.portonazos += parseInt(row.portonazos) || 0;
+      totales.asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
+      totales.no_especificados += parseInt(row.no_especificados) || 0;
+      totales.confianza_promedio += parseFloat(row.confianza_promedio) || 0;
+    });
+
+    // Promedio de confianza
+    totales.confianza_promedio = result.rows.length > 0 
+      ? Math.round((totales.confianza_promedio / result.rows.length) * 100) / 100
+      : 0;
+
+    res.json({
+      success: true,
+      periodo: {
+        fecha_inicio: fechaInicioStr,
+        fecha_fin: fechaFinStr,
+        dias: Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)),
+      },
+      estadisticas_totales: totales,
+      periodos: result.rows  // listo para graficar por periodo
+    });
+
+  } catch (err) {
+    console.error('Error en /estadisticas-camara:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener estadísticas de la cámara',
+      detalle: err.message
+    });
+  } finally {
+    if (client) client.release();
+  }
+});
+
 router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async (req, res) => {
   let client;
   try {
@@ -654,6 +808,10 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
     }
   }
 });
+
+
+
+
 
 
 export default router

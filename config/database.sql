@@ -157,6 +157,57 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION reporte_alertas_por_camara(
+    fecha_inicio TIMESTAMP,
+    fecha_fin TIMESTAMP,
+    agrupacion TEXT,
+    camara_id INT
+)
+RETURNS TABLE(
+    periodo TIMESTAMP,
+    id_sector INTEGER,
+    nombre_sector VARCHAR(100),
+    total_alertas BIGINT,
+    total_alertas_camaras_caidas BIGINT,
+    camaras_activas BIGINT,
+    confianza_promedio NUMERIC,
+    alertas_confirmadas BIGINT,
+    falsos_positivos BIGINT,
+    merodeos BIGINT,
+    portonazos BIGINT,
+    asaltos_hogar BIGINT,
+    camaras_caidas BIGINT,
+    no_especificados BIGINT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        DATE_TRUNC(agrupacion, a.hora_suceso) AS periodo,
+        s.id AS id_sector,
+        s.nombre_sector,  -- ← aquí estaba la coma que faltaba
+        SUM(CASE WHEN a.tipo IN (1,2,3) THEN 1 ELSE 0 END)::BIGINT AS total_alertas,
+        SUM(CASE WHEN a.tipo = 4 THEN 1 ELSE 0 END)::BIGINT AS total_alertas_camaras_caidas,
+        COUNT(DISTINCT c.id)::BIGINT AS camaras_activas,
+        ROUND(AVG(a.score_confianza), 2) AS confianza_promedio,
+        SUM(CASE WHEN a.estado = 1 AND a.tipo IN (1,2,3) THEN 1 ELSE 0 END)::BIGINT AS alertas_confirmadas,
+        SUM(CASE WHEN a.estado = 2 AND a.tipo IN (1,2,3) THEN 1 ELSE 0 END)::BIGINT AS falsos_positivos,
+        SUM(CASE WHEN a.tipo = 1 THEN 1 ELSE 0 END)::BIGINT AS merodeos,
+        SUM(CASE WHEN a.tipo = 2 THEN 1 ELSE 0 END)::BIGINT AS portonazos,
+        SUM(CASE WHEN a.tipo = 3 THEN 1 ELSE 0 END)::BIGINT AS asaltos_hogar,
+        SUM(CASE WHEN a.tipo = 4 THEN 1 ELSE 0 END)::BIGINT AS camaras_caidas,
+        SUM(CASE WHEN a.tipo = 0 THEN 1 ELSE 0 END)::BIGINT AS no_especificados
+    FROM alertas a
+    INNER JOIN camaras c ON a.id_camara = c.id
+    INNER JOIN sectores s ON c.id_sector = s.id
+    WHERE a.hora_suceso BETWEEN fecha_inicio AND fecha_fin
+      AND a.id_camara = camara_id
+    GROUP BY DATE_TRUNC(agrupacion, a.hora_suceso), a.id_camara, s.id, s.nombre_sector
+    ORDER BY periodo DESC;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
 -- Insertar datos en la tabla sectores
 INSERT INTO public.sectores (id, nombre_sector, descripcion, coordinates) VALUES
 (1, 'Sector 1', 'Descripción del Sector 1.', '[
