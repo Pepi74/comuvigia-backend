@@ -83,6 +83,43 @@ router.get('/cantidad-alertas', verificarToken, async (_, res) => {
   }
 })
 
+router.get('/cantidad-alertas-fecha', verificarToken, async (req, res) => {
+  const { fecha_inicio, fecha_fin } = req.query;
+
+  try {
+    if (!fecha_inicio || !fecha_fin) {
+      return res.status(400).json({ error: 'Debe especificar fecha_inicio y fecha_fin' });
+    }
+
+    // Consulta SQL con filtro de fechas
+    const query = `
+      SELECT 
+        c.id,
+        c.nombre,
+        c.direccion,
+        COUNT(a.id) AS total_alertas
+      FROM camaras c
+      LEFT JOIN alertas a ON a.id_camara = c.id
+        AND a.hora_suceso BETWEEN $1 AND $2
+      GROUP BY c.id, c.nombre, c.direccion
+      ORDER BY total_alertas DESC
+    `;
+
+    const result = await pool.query(query, [fecha_inicio, fecha_fin]);
+
+    const datosConvertidos = result.rows.map(cam => ({
+      ...cam,
+      total_alertas: Number(cam.total_alertas),
+    }));
+
+    res.json(datosConvertidos);
+  } catch (err) {
+    console.error('Error al obtener cámaras por fecha:', err);
+    res.status(500).json({ error: 'Error al obtener cámaras por fecha' });
+  }
+});
+
+
 router.get('/nombre-camaras', verificarToken, async (_, res) => {
   try {
     const result = await pool.query('SELECT id, nombre FROM camaras');
