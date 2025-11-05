@@ -637,147 +637,101 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
     let startDate, endDate;
 
     if (fecha_inicio && fecha_fin) {
-      // Usar fechas proporcionadas
-      startDate = new Date(fecha_inicio);
-      endDate = new Date(fecha_fin);
+      startDate = new Date(fecha_inicio + 'T00:00:00');
+      endDate = new Date(fecha_fin + 'T23:59:59');
     } else {
-      // Usar el parámetro de días
       endDate = new Date();
       startDate = new Date();
       startDate.setDate(startDate.getDate() - parseInt(dias));
     }
 
-    // Formatear fechas para PostgreSQL
+    // ✅ formato compatible con PostgreSQL TIMESTAMP
     const fechaInicioStr = startDate.toISOString().replace('T', ' ').substring(0, 19);
     const fechaFinStr = endDate.toISOString().replace('T', ' ').substring(0, 19);
 
-    let grupo; 
     const gruposValidos = ['day', 'week', 'month'];
-    grupo = gruposValidos.includes(group) ? group : 'day';
+    const grupo = gruposValidos.includes(group) ? group : 'day';
 
     client = await pool.connect();
-    
-    //console.log('Fecha inicio:', fechaInicioStr);
-    //console.log('Fecha fin:', fechaFinStr);
-    //console.log('Grupo:', grupo);
-    
-    // Llamar a la función de PostgreSQL
-    const query = `
-      SELECT * FROM reporte_alertas_por_periodo($1, $2, $3)
-    `;
 
-    const result = await client.query(query, [fechaInicioStr, fechaFinStr, grupo]);
-    //console.log('resultado query;', result)
+    // === 1️⃣ Estadísticas totales ===
+    const result = await client.query(
+      `SELECT * FROM reporte_alertas_por_periodo($1, $2, $3)`,
+      [fechaInicioStr, fechaFinStr, grupo]
+    );
+
     if (result.rows.length === 0) {
       return res.json({
         success: true,
-        periodo: {
-          fecha_inicio: fechaInicioStr,
-          fecha_fin: fechaFinStr,
-          dias: Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24))
-        },
-        estadisticas_totales: {
-          total_alertas: 0,
-          total_alertas_camaras_caidas: 0,
-          alertas_confirmadas: 0,
-          falsos_positivos: 0,
-          merodeos: 0,
-          portonazos: 0,
-          asaltos_hogar: 0,
-          camaras_caidas: 0,
-          no_especificados: 0,
-          tasa_confianza: 0
-        },
-        sectores: []
+        periodo: { fecha_inicio: fechaInicioStr, fecha_fin: fechaFinStr },
+        estadisticas_totales: {},
+        sectores: [],
+        horarios: []
       });
     }
 
-    // Calcular totales
+    // === 2️⃣ Agregación general y sectores ===
     const totales = {
       total_alertas: 0,
-      total_alertas_camaras_caidas: 0,
-      alertas_confirmadas: 0,
-      falsos_positivos: 0,
       merodeos: 0,
       portonazos: 0,
       asaltos_hogar: 0,
-      camaras_caidas: 0,
-      no_especificados: 0,
-      especificadas:0,
-
+      falsos_positivos: 0,
+      alertas_confirmadas: 0,
     };
 
-    // Agrupar por sector
     const sectores = {};
-    
+
     result.rows.forEach(row => {
-      // Totales generales
-      totales.total_alertas += parseInt(row.total_alertas) || 0;
-      totales.total_alertas_camaras_caidas += parseInt(row.total_alertas_camaras_caidas) || 0;
-      totales.alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
-      totales.falsos_positivos += parseInt(row.falsos_positivos) || 0;
-      totales.merodeos += parseInt(row.merodeos) || 0;
-      totales.portonazos += parseInt(row.portonazos) || 0;
-      totales.no_especificados += parseInt(row.no_especificados) || 0;
-      totales.asaltos_hogar += parseInt(row.asaltos_hogar) || 0 ;
-      totales.camaras_caidas += parseInt(row.camaras_caidas) || 0 ;
-    
-      // Por sector
-      const sectorId = row.id_sector;
-      if (!sectores[sectorId]) {
-        sectores[sectorId] = {
-          id_sector: sectorId,
+      totales.total_alertas += Number(row.total_alertas) || 0;
+      totales.merodeos += Number(row.merodeos) || 0;
+      totales.portonazos += Number(row.portonazos) || 0;
+      totales.asaltos_hogar += Number(row.asaltos_hogar) || 0;
+      totales.falsos_positivos += Number(row.falsos_positivos) || 0;
+      totales.alertas_confirmadas += Number(row.alertas_confirmadas) || 0;
+
+      const idSector = row.id_sector;
+      if (!sectores[idSector]) {
+        sectores[idSector] = {
+          id_sector: idSector,
           nombre_sector: row.nombre_sector,
           total_alertas: 0,
-          total_alertas_camaras_caidas: 0,
-          alertas_confirmadas: 0,
-          falsos_positivos: 0,
           merodeos: 0,
           portonazos: 0,
           asaltos_hogar: 0,
-          camaras_caidas: 0,
-          no_especificados: 0,
-          especificadas:0,
         };
       }
 
-      sectores[sectorId].total_alertas += parseInt(row.total_alertas) || 0;
-      sectores[sectorId].total_alertas_camaras_caidas += parseInt(row.total_alertas_camaras_caidas) || 0;
-      sectores[sectorId].alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
-      sectores[sectorId].falsos_positivos += parseInt(row.falsos_positivos) || 0;
-      sectores[sectorId].merodeos += parseInt(row.merodeos) || 0;
-      sectores[sectorId].portonazos += parseInt(row.portonazos) || 0;
-      sectores[sectorId].asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
-      sectores[sectorId].camaras_caidas += parseInt(row.camaras_caidas) || 0;
-      sectores[sectorId].no_especificados += parseInt(row.no_especificados) || 0;
-      sectores[sectorId].especificadas += sectores[sectorId].total_alertas - sectores[sectorId].no_especificados
+      sectores[idSector].total_alertas += Number(row.total_alertas) || 0;
+      sectores[idSector].merodeos += Number(row.merodeos) || 0;
+      sectores[idSector].portonazos += Number(row.portonazos) || 0;
+      sectores[idSector].asaltos_hogar += Number(row.asaltos_hogar) || 0;
     });
 
-    console.log(totales);
-    totales.especificadas = totales.falsos_positivos + totales.alertas_confirmadas 
-    // Calcular tasa de confianza
-    const tasaConfianza = totales.especificadas > 0 
-      ? Math.round((totales.alertas_confirmadas / totales.especificadas) * 100 )
-      : 0;
-    
-    // Porcentaje de alertas que son verdaderas positivas (excluye falsos positivos del total)
-    const tasaPrecision = totales.especificadas > 0 
-      ? Math.round((totales.alertas_confirmadas / (totales.especificadas - totales.falsos_positivos)) * 100)
-      : 0;
+    // === 3️⃣ Distribución horaria (sin truncamiento) ===
+    const resultHorarios = await client.query(
+      `
+      SELECT
+        EXTRACT(HOUR FROM a.hora_suceso) AS hora,
+        SUM(CASE WHEN a.tipo = 1 THEN 1 ELSE 0 END) AS merodeos,
+        SUM(CASE WHEN a.tipo = 2 THEN 1 ELSE 0 END) AS portonazos,
+        SUM(CASE WHEN a.tipo = 3 THEN 1 ELSE 0 END) AS asaltos_hogar
+      FROM alertas a
+      WHERE a.hora_suceso BETWEEN $1::timestamp AND $2::timestamp
+      GROUP BY hora
+      ORDER BY hora;
+      `,
+      [fechaInicioStr, fechaFinStr]
+    );
 
-    // Porcentaje de alertas que fueron falsos positivos
-    const tasaFalsosPositivos = totales.especificadas > 0 
-      ? Math.round((totales.falsos_positivos / totales.especificadas) * 100)
-      : 0;
+    const horarios = resultHorarios.rows.map(r => ({
+      hora: Number(r.hora),
+      merodeos: Number(r.merodeos) || 0,
+      portonazos: Number(r.portonazos) || 0,
+      asaltos_hogar: Number(r.asaltos_hogar) || 0
+    }));
 
-    // Métrica compuesta que penaliza falsos positivos
-    const scoreCalidad = totales.total_alertas > 0 
-      ? Math.round((
-          (totales.alertas_confirmadas * 2) - // Doble peso a confirmadas
-          totales.falsos_positivos            // Penalización por falsos positivos
-        ) / (totales.especificadas * 2) * 100) // Normalizado a 100
-      : 0;
-
+    // === 4️⃣ Devolver todo junto ===
     res.json({
       success: true,
       periodo: {
@@ -785,33 +739,21 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
         fecha_fin: fechaFinStr,
         dias: Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24))
       },
-      estadisticas_totales: {
-        ...totales,
-        tasa_confianza: tasaConfianza,
-        tasa_precision: tasaPrecision,
-        tasa_error: tasaFalsosPositivos,
-        score_calidad: scoreCalidad
-      },
-      sectores: Object.values(sectores)
+      estadisticas_totales: totales,
+      sectores: Object.values(sectores),
+      horarios
     });
 
   } catch (err) {
     console.error('Error en /estadisticas-totales:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       error: 'Error al obtener estadísticas totales',
-      detalle: err.message 
+      detalle: err.message
     });
   } finally {
-    if (client) {
-      client.release();
-    }
+    if (client) client.release();
   }
 });
-
-
-
-
-
 
 export default router

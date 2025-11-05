@@ -671,19 +671,20 @@ def list_available_batches(camera_id):
     
 @video_bp.route('/video/list/<camera_id>')
 def list_virtual_videos(camera_id):
-    """Listar videos virtuales basados en batches disponibles (tar) o MKV reales (source=mkv)"""
+    """Listar videos (MKV o TAR) filtrados por rango de fecha y rango horario"""
     try:
-        # NUEVO: selector de fuente ('tar' por defecto para no romper nada)
+        # Parámetro para definir la fuente (por compatibilidad)
         source = request.args.get('source', 'tar').lower()
 
-        # Obtener parámetros de la query string
+        # Parámetros de la query
         start_date_str = request.args.get('start_date')
         end_date_str = request.args.get('end_date')
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 10, type=int)
         video_duration_min = request.args.get('duration_min', 5, type=int)
+        time_range = request.args.get('time_range', 'all').lower()
 
-        # Validar parámetros
+        # Validaciones básicas
         if page < 1:
             return jsonify({"error": "El número de página debe ser al menos 1"}), 400
         if per_page < 1 or per_page > 100:
@@ -693,7 +694,6 @@ def list_virtual_videos(camera_id):
 
         # Parsear fechas
         if not start_date_str or not end_date_str:
-            # defaults aware
             end_time = datetime.now().astimezone()
             start_time = end_time - timedelta(days=7)
         else:
@@ -703,7 +703,6 @@ def list_virtual_videos(camera_id):
             except ValueError:
                 return jsonify({"error": "Formato de fecha inválido. Use formato ISO"}), 400
 
-        # Normalizar siempre a aware local
         start_time = _ensure_local_aware(start_time)
         end_time   = _ensure_local_aware(end_time)
 
@@ -715,12 +714,47 @@ def list_virtual_videos(camera_id):
         if (end_time - start_time).days > max_days:
             return jsonify({"error": f"El rango de búsqueda no puede exceder {max_days} días"}), 400
 
+        # --- Definición de rangos horarios ---
+        ranges = {
+            'morning': (6, 12),         # Mañana
+            'afternoon': (12, 18),      # Tarde
+            'night': (18, 23),          # Noche
+            'earlymorning': (23, 6),    # Madrugada
+        }
+
         # ----------------------------
-        # Rama MKV vs TAR (virtual)
+        # Fuente MKV
         # ----------------------------
         if source == 'mkv':
             mkv_items = video_reconstructor._list_mkv_in_range(camera_id, start_time, end_time)
-            logger.info(f"Se encontraron {len(mkv_items)} MKV para la cámara {camera_id} en el rango especificado")
+            logger.info(f"Se encontraron {len(mkv_items)} MKV para la cámara {camera_id}")
+
+            # --- Filtro horario (HdU 12) ---
+            if time_range != 'all' and time_range in ranges:
+                start_h, end_h = ranges[time_range]
+                filtered_items = []
+
+                for item in mkv_items:
+                    try:
+                        ts = item.get('time') or item.get('timestamp') or item.get('start_time')
+                        if not ts:
+                            continue
+                        dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                        hour = dt.hour
+
+                        # Normal y cruzado (madrugada)
+                        if start_h < end_h:
+                            if start_h <= hour < end_h:
+                                filtered_items.append(item)
+                        else:
+                            if hour >= start_h or hour < end_h:
+                                filtered_items.append(item)
+
+                    except Exception as ex:
+                        logger.warning(f"No se pudo procesar item: {ex}")
+
+                mkv_items = filtered_items
+                logger.info(f"Rango horario '{time_range}': {len(mkv_items)} resultados")
 
             # Paginación
             total = len(mkv_items)
@@ -730,11 +764,12 @@ def list_virtual_videos(camera_id):
 
             return jsonify({
                 "camera_id": camera_id,
-                "source": source,  # 'mkv' o 'tar'
+                "source": source,
                 "videos": page_items,
                 "time_range": {
                     "start": start_time.isoformat(),
-                    "end": end_time.isoformat()
+                    "end": end_time.isoformat(),
+                    "filter": time_range
                 },
                 "pagination": {
                     "page": page,
@@ -744,39 +779,61 @@ def list_virtual_videos(camera_id):
                 }
             })
 
+        # ----------------------------
+        # Fuente TAR (virtual)
+        # ----------------------------
         else:
-            # Comportamiento actual: tar.gz → agrupar en “virtual videos”
             batches = video_reconstructor._find_batches_in_range(camera_id, start_time, end_time)
-            logger.info(f"Se encontraron {len(batches)} batches para la cámara {camera_id} en el rango especificado")
+            logger.info(f"Se encontraron {len(batches)} batches para la cámara {camera_id}")
 
             virtual_videos = create_virtual_videos_from_batches(batches, video_duration_min * 60)
-            logger.info(f"Se encontraron {len(virtual_videos)} videos virtuales para la cámara {camera_id}")
 
+            # Filtro horario también disponible para TAR
+            if time_range != 'all' and time_range in ranges:
+                start_h, end_h = ranges[time_range]
+                filtered = []
+                for v in virtual_videos:
+                    ts = v.get('time') or v.get('timestamp') or v.get('start_time')
+                    if not ts:
+                        continue
+                    dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                    h = dt.hour
+                    if start_h < end_h:
+                        if start_h <= h < end_h:
+                            filtered.append(v)
+                    else:
+                        if h >= start_h or h < end_h:
+                            filtered.append(v)
+                virtual_videos = filtered
+                logger.info(f"Rango horario '{time_range}': {len(virtual_videos)} resultados")
+
+            # Paginación
             total = len(virtual_videos)
             start_idx = (page - 1) * per_page
             end_idx = start_idx + per_page
             paginated_videos = virtual_videos[start_idx:end_idx]
 
-        # Respuesta
-        return jsonify({
-            "camera_id": camera_id,
-            "source": source,  # 'mkv' o 'tar'
-            "videos": paginated_videos,
-            "time_range": {
-                "start": start_time.isoformat(),
-                "end": end_time.isoformat()
-            },
-            "pagination": {
-                "page": page,
-                "per_page": per_page,
-                "total": total,
-                "pages": (total + per_page - 1) // per_page
-            }
-        })
+            return jsonify({
+                "camera_id": camera_id,
+                "source": source,
+                "videos": paginated_videos,
+                "time_range": {
+                    "start": start_time.isoformat(),
+                    "end": end_time.isoformat(),
+                    "filter": time_range
+                },
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total": total,
+                    "pages": (total + per_page - 1) // per_page
+                }
+            })
 
     except Exception as e:
         logger.error(f"Error en list_virtual_videos: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 400
+
 
 def create_virtual_videos_from_batches(batches, target_duration_seconds):
     """Agrupar batches en segmentos de video virtuales usando tu estructura de batches"""
