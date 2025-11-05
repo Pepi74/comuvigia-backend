@@ -36,7 +36,7 @@ SOCKETIO_BACKEND_URL = "http://backend:3000"
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": os.environ["FRONTEND_URL"]}})
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 app.register_blueprint(video_bp, url_prefix='/')
 start_time = time.time()
 camera_queue = queue.Queue()
@@ -2231,6 +2231,5 @@ if __name__ == '__main__':
         host='0.0.0.0', 
         port=FLASK_PORT, 
         debug=False,
-        allow_unsafe_werkzeug=True,
-        async_mode='threading'
+        allow_unsafe_werkzeug=True
     )
