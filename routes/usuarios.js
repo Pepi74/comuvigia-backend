@@ -10,7 +10,7 @@ dotenv.config()
 const router = Router()
 
 // Endpoint para registrar un usuario en BD con contraseña hasheada
-router.post('/register', verificarToken, verificarRol([2]), async(req, res) => {
+router.post('/register', async(req, res) => {
 
     const { usuario, contrasena, nombre, rol } = req.body
 
