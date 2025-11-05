@@ -1,6 +1,4 @@
 import signal
-import eventlet
-eventlet.monkey_patch()
 import tarfile
 import pika
 from flask_socketio import SocketIO, emit
@@ -1356,6 +1354,8 @@ class FFmpegSegmenter:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.seg_seconds = seg_seconds
         self.proc = None
+        self.running = False
+        self.monitor_thread = None
         self.port = base_port + int(cam_id)  # puerto único por cámara
          # Configuración mejorada de FFmpeg
         self.ffmpeg_args = [
@@ -1380,15 +1380,47 @@ class FFmpegSegmenter:
     def start(self):
         """Iniciar FFmpeg para grabación con segmentos"""
         try:
+            # Asegurarse de que no haya un proceso zombie
+            if self.proc and self.proc.poll() is None:
+                logger.warning(f"FFmpeg cámara {self.cam_id} ya estaba corriendo. Deteniendo primero.")
+                self.stop()
+
             ffmpeg_log = open(f"/logs/ffmpeg_record_{self.cam_id}.log", "ab", buffering=0)
             self.proc = subprocess.Popen(self.ffmpeg_args, stdout=ffmpeg_log, stderr=ffmpeg_log)
             logger.info(f"🎥 FFmpeg grabación iniciada cámara {self.cam_id} (PID: {self.proc.pid})")
-            
-            # Esperar a que comience a generar archivos
-            time.sleep(2)
-            
+
+            # Iniciar el monitoreo si no está corriendo
+            self.running = True
+            if self.monitor_thread is None or not self.monitor_thread.is_alive():
+                self.monitor_thread = Thread(target=self.monitor, daemon=True)
+                self.monitor_thread.start()
         except Exception as e:
             logger.error(f"❌ Error FFmpeg grabación cámara {self.cam_id}: {e}")
+    
+    def monitor(self):
+        """Bucle de monitoreo para reiniciar FFmpeg si muere."""
+        logger.info(f"✅ Iniciando monitor FFmpeg para cámara {self.cam_id}")
+        while self.running:
+            if self.proc is None:
+                logger.warning(f"Monitor FFmpeg {self.cam_id}: Proceso es None, saliendo de monitor.")
+                break # El proceso fue detenido
+
+            return_code = self.proc.poll()
+
+            if return_code is not None: # El proceso ha muerto
+                logger.error(f"❌ Monitor FFmpeg {self.cam_id}: ¡Proceso muerto! (Código: {return_code}). Reiniciando...")
+                try:
+                    # Esperar un poco antes de reiniciar
+                    time.sleep(5) 
+                    if self.running: # Solo reiniciar si aún debemos estar corriendo
+                        self.start() # start() reiniciará el proceso
+                    # Salir de este hilo de monitor, start() creará uno nuevo
+                    break 
+                except Exception as e:
+                    logger.error(f"❌ Error reiniciando FFmpeg {self.cam_id}: {e}")
+
+            time.sleep(10) # Verificar cada 10 segundos
+        logger.info(f"🛑 Monitor FFmpeg {self.cam_id} detenido.")
 
     def get_latest_segment(self):
         """Obtener el segmento más reciente"""
@@ -1400,16 +1432,17 @@ class FFmpegSegmenter:
             return None
 
     def stop(self):
-        """Detener FFmpeg de manera segura"""
+        """Detener FFmpeg de manera segura y rápida"""
         if self.proc and self.proc.poll() is None:
             try:
-                self.proc.terminate()
-                self.proc.wait(timeout=5)
-                logger.info(f"FFmpeg detenido cámara {self.cam_id}")
-            except subprocess.TimeoutExpired:
-                logger.warning(f"FFmpeg no respondió, forzando terminación cámara {self.cam_id}")
+                logger.info(f"Terminando FFmpeg (PID: {self.proc.pid}) cámara {self.cam_id}")
+                self.proc.terminate() 
+                # self.proc.wait(timeout=5) # <-- ELIMINAR ESTA LÍNEA BLOQUEANTE
+            except Exception as e:
+                logger.warning(f"No se pudo terminar FFmpeg cámara {self.cam_id}, forzando kill: {e}")
                 self.proc.kill()
-                self.proc.wait()
+        self.proc = None
+        self.monitor_thread = None
 
 # Inicializar streams para todas las cámaras
 video_streams = {}
@@ -2078,19 +2111,19 @@ def detener_camara_simple(camera_id):
             if hasattr(stream, 'segmenter') and stream.segmenter:
                 stream.segmenter.stop()
             
-            if hasattr(stream, 'cap') and stream.cap:
-                stream.cap.release()
-                stream.cap = None
+            #if hasattr(stream, 'cap') and stream.cap:
+            #    stream.cap.release()
+            #    stream.cap = None
 
             # Detener timer de batch
             if hasattr(stream, 'batch_timer') and stream.batch_timer:
                 stream.batch_timer = None
             
             # Limpiar buffers
-            with stream.buffer_lock:
-                stream.frames_buffer.clear()
-                stream.buffer_timestamps.clear()
-                stream.frame = None
+            #with stream.buffer_lock:
+            #    stream.frames_buffer.clear()
+            #    stream.buffer_timestamps.clear()
+            #    stream.frame = None
             
             # Remover del diccionario global
             del video_streams[camera_id]
@@ -2198,5 +2231,6 @@ if __name__ == '__main__':
         host='0.0.0.0', 
         port=FLASK_PORT, 
         debug=False,
-        allow_unsafe_werkzeug=True
+        allow_unsafe_werkzeug=True,
+        async_mode='threading'
     )
