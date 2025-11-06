@@ -347,7 +347,7 @@ class SocketIOClientManager:
                 stream.reconnect_attempts = 0
                 stream.alert_sent = False
                 stream.disabled = False
-                stream.reconnect_camera()
+                stream.start()
                 
             elif action == 'stop':
                 logger.info(f"⏹️ Socket.IO: Deteniendo cámara {camera_id_int}")
@@ -355,9 +355,6 @@ class SocketIOClientManager:
                 stream.disabled = True
                 if hasattr(stream, 'segmenter'):
                     stream.segmenter.stop()
-                if hasattr(stream, 'cap') and stream.cap:
-                    stream.cap.release()
-                    stream.cap = None
                     
             elif action == 'enable':
                 logger.info(f"✅ Socket.IO: Habilitando cámara {camera_id_int}")
@@ -564,18 +561,6 @@ class S3Client:
         except Exception as e:
             logger.error(f"Error conectando a S3: {str(e)}")
             self.connected = False
-    
-    def upload_file_path(self, local_path, key, metadata=None, content_type="video/x-matroska"):
-        extra = {"ContentType": content_type}
-        if metadata:
-            extra["Metadata"] = {k: str(v) for k, v in metadata.items()}
-        self.client.upload_file(
-            Filename=local_path,
-            Bucket=S3_BUCKET_NAME,
-            Key=key,
-            ExtraArgs=extra,
-            Config=self.transfer_cfg
-        )
 
     def upload_batch(self, camera_id, frames, timestamp, custom_metadata=None, flag=False, fps=30):
         try:
@@ -804,7 +789,6 @@ class VideoStream:
         self.buffer_lock = threading.RLock()
         self.last_batch_time = time.time()
         self.s3_client = S3
-        self.cap = None
         self.last_frame_time = time.time()
         self.last_check_time = time.time() 
         self.segmenter = None
@@ -818,47 +802,42 @@ class VideoStream:
         self.socketio_manager = socketio_manager
         self.batch_timer = None
         self.batch_interval = BATCH_INTERVAL
+        self.stdout_pipe = None
+        self.frame_size_bytes = DEFAULT_OUTPUT_SIZE[0] * DEFAULT_OUTPUT_SIZE[1] * 3 # 640*360*3
+        self.segmenter = FFmpegSegmenter(
+            self,
+            self.camera_id, 
+            self.link_camara, 
+            seg_seconds=self.batch_interval
+        )
 
-    def start(self):
-        """Iniciar stream con conexión directa + grabación en paralelo"""
+    def start(self, is_reconnect=False):
+        """Iniciar stream con FFmpeg unificado"""
         self.running = True
-        self.reconnect_attempts = 0
-        self.alert_sent = False
         self.disabled = False
         
-        # ✅ FFMPEG PARA GRABACIÓN (en segundo plano)
-        if self.segmenter is None:
-            self.segmenter = FFmpegSegmenter(self.camera_id, self.link_camara, seg_seconds=BATCH_INTERVAL)
-            self.segmenter.start()
-        elif self.segmenter.proc is None or self.segmenter.proc.poll() is not None:
-            # Si existe pero no está corriendo, reiniciar
-            self.segmenter.start()
+        # Iniciar FFmpeg y obtener el pipe
+        self.stdout_pipe = self.segmenter.start()
         
-        # ✅ OPENCV DIRECTO PARA ANÁLISIS
+        if self.stdout_pipe is None:
+            logger.error(f"Cámara {self.camera_id}: No se pudo iniciar FFmpeg. Abortando.")
+            self.running = False
+            return
+
+        # Iniciar el HILO LECTOR (update)
         self.thread = Thread(target=self.update, daemon=True)
+        if not is_reconnect:
+            self.reconnect_attempts = 0
+            self.alert_sent = False
         self.thread.start()
         
-        self.start_batch_timer()
+        # Iniciar el TIMER de guardado de batches MKV
+        if not is_reconnect:
+            self.start_batch_timer()
         
         logger.info(f"🎬 Stream cámara {self.camera_id} - Timer batch cada {self.batch_interval}s")
+        # Ya no necesitamos 'inicializar_componentes_pesados'
         
-        def inicializar_componentes_pesados():
-            try:
-                # ✅ INICIAR FFMPEG
-                self.segmenter.start()
-                
-                # ✅ ESPERAR QUE PROC ESTÉ LISTO
-                time.sleep(1)
-                
-                # Intentar primera conexión
-                self.reconnect_camera()
-                
-                logger.info(f"✅ Componentes pesados inicializados cámara {self.camera_id}")
-            except Exception as e:
-                logger.error(f"❌ Error inicializando componentes pesados cámara {self.camera_id}: {str(e)}")
-        
-        threading.Thread(target=inicializar_componentes_pesados, daemon=True).start()
-    
     def start_batch_timer(self):
         """Iniciar timer periódico para guardar batches MKV"""
         def batch_timer_task():
@@ -884,14 +863,11 @@ class VideoStream:
         logger.info(f"⏰ Timer batch iniciado para cámara {self.camera_id} - Intervalo: {self.batch_interval}s")
 
     def update(self):
-        """Loop principal con diagnóstico detallado"""
-        last_publish_time = 0
-        last_batch_check = time.time()
-        MAX_PUBLISH_FPS = 15
-        BATCH_CHECK_INTERVAL = 60
+        """Loop principal: Lee desde el PIPE de FFmpeg"""
         
+        last_publish_time = 0
+        MAX_PUBLISH_FPS = 15
         frame_count = 0
-        empty_frame_count = 0
         
         while self.running:
             try:
@@ -900,141 +876,59 @@ class VideoStream:
                     time.sleep(5)
                     continue
 
-                # ✅ DIAGNÓSTICO DE CONEXIÓN
-                if not self.is_capture_active():
-                    logger.warning(f"Cámara {self.camera_id}: Captura inactiva, reconectando...")
-                    success = self.connect_direct_rtsp()
-                    if not success:
-                        logger.error(f"Cámara {self.camera_id}: Reconexión fallida")
-                        time.sleep(2)
-                        continue
-                    else:
-                        logger.info(f"Cámara {self.camera_id}: Reconexión exitosa")
+                # --- LÓGICA DE LECTURA DE PIPE ---
+                if self.stdout_pipe is None:
+                    logger.error(f"Cámara {self.camera_id}: Pipe de FFmpeg es None. Esperando...")
+                    time.sleep(5)
+                    continue
+
+                # Leer el número exacto de bytes de un frame
+                raw_frame = self.stdout_pipe.read(self.frame_size_bytes)
                 
-                # ✅ CAPTURAR FRAME CON DIAGNÓSTICO
-                ret, frame = self.cap.read()
-                if not ret:
-                    empty_frame_count += 1
-                    logger.warning(f"Cámara {self.camera_id}: Frame vacío (#{empty_frame_count})")
-                    if empty_frame_count >= 5:
-                        logger.error(f"Cámara {self.camera_id}: Demasiados frames vacíos, reconectando...")
-                        self.reconnect_direct()
-                        empty_frame_count = 0
+                if not raw_frame or len(raw_frame) != self.frame_size_bytes:
+                    logger.warning(f"Cámara {self.camera_id}: Frame vacío o incompleto desde pipe FFmpeg.")
+                    # El monitor de FFmpeg se encargará de reiniciar si el proceso murió
                     time.sleep(1)
                     continue
                 
-                # ✅ RESETEAR CONTADOR DE FRAMES VACÍOS
-                empty_frame_count = 0
                 frame_count += 1
                 
-                # ✅ VERIFICAR FRAME CAPTURADO
-                if frame is None:
-                    logger.error(f"Cámara {self.camera_id}: Frame es None después de cap.read()")
-                    continue
-                    
-                if frame.size == 0:
-                    logger.error(f"Cámara {self.camera_id}: Frame vacío (size=0)")
-                    continue
+                # Convertir los bytes a un frame de Numpy
+                processed_frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape(
+                    (DEFAULT_OUTPUT_SIZE[1], DEFAULT_OUTPUT_SIZE[0], 3)
+                )
                 
-                #logger.info(f"✅ Cámara {self.camera_id}: Frame #{frame_count} capturado - Shape: {frame.shape}")
-
-                # ✅ PROCESAR FRAME
-                try:
-                    processed_frame = cv2.resize(frame, DEFAULT_OUTPUT_SIZE)
-                    #logger.info(f"✅ Cámara {self.camera_id}: Frame procesado - {processed_frame.shape}")
-                except Exception as e:
-                    logger.error(f"Cámara {self.camera_id}: Error en resize: {str(e)}")
-                    continue
+                # --- FIN DE LÓGICA DE LECTURA ---
 
                 # ✅ ACTUALIZAR BUFFER Y FRAME PRINCIPAL
                 with self.buffer_lock:
-                    try:
-                        # Agregar al buffer
-                        self.frames_buffer.append(processed_frame)
-                        self.buffer_timestamps.append(time.time())
-                        
-                        # ✅ ESTABLECER self.frame (CRÍTICO)
-                        self.frame = processed_frame
-                        
-                        # Diagnóstico cada 100 frames
-                        if frame_count % 100 == 0:
-                            buffer_size = len(self.frames_buffer)
-                            logger.info(f"📊 Cámara {self.camera_id}: "
-                                    f"Frame #{frame_count}, Buffer: {buffer_size}, "
-                                    f"self.frame: {'SET' if self.frame is not None else 'MISSING'}")
-                            
-                    except Exception as e:
-                        logger.error(f"Cámara {self.camera_id}: Error actualizando buffer: {str(e)}")
+                    self.frames_buffer.append(processed_frame)
+                    self.buffer_timestamps.append(time.time())
+                    self.frame = processed_frame # <-- CRÍTICO para /video_feed
+                    
+                    if frame_count % 100 == 0:
+                        logger.info(f"📊 Cámara {self.camera_id}: "
+                                    f"Frame #{frame_count} (desde pipe), Buffer: {len(self.frames_buffer)}, "
+                                    f"self.frame: {'SET'}")
 
                 # ✅ PUBLICAR A RABBITMQ
                 current_time = time.time()
                 if current_time - last_publish_time >= 1.0 / MAX_PUBLISH_FPS:
                     try:
-                        _, jpeg_buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                        # Usamos 'processed_frame' que ya está redimensionado
+                        _, jpeg_buffer = cv2.imencode(".jpg", processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                         jpeg_bytes = jpeg_buffer.tobytes()
                         publisher.publish_frame(self.camera_id, jpeg_bytes)
                         last_publish_time = current_time
-                        logger.debug(f"Cámara {self.camera_id}: Frame publicado a RabbitMQ")
                     except Exception as e:
                         logger.error(f"Cámara {self.camera_id}: Error publicando a RabbitMQ: {str(e)}")
 
-                # ✅ CONTROL DE VELOCIDAD
-                elapsed = time.time() - start_time
-                target_frame_time = 1.0 / MAX_FPS
-                sleep_time = max(0, target_frame_time - elapsed)
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-                            
+                # FFmpeg ya está enviando a MAX_FPS
+            
             except Exception as e:
-                logger.error(f"Cámara {self.camera_id}: Error en loop principal: {str(e)}")
+                logger.error(f"Cámara {self.camera_id}: Error en loop principal (pipe): {str(e)}")
                 time.sleep(2)
     
-    def connect_direct_rtsp(self):
-        """Conectar directamente al RTSP - NUEVO MÉTODO"""
-        try:
-            # Liberar conexión anterior
-            if hasattr(self, 'cap') and self.cap is not None:
-                self.cap.release()
-                self.cap = None
-            
-            logger.info(f"Cámara {self.camera_id}: Conectando DIRECTAMENTE a {self.link_camara}")
-            
-            # ✅ CONEXIÓN DIRECTA AL RTSP ORIGINAL
-            self.cap = cv2.VideoCapture(self.link_camara, cv2.CAP_FFMPEG)
-            
-            if self.cap is None or not self.cap.isOpened():
-                logger.error(f"Cámara {self.camera_id}: No se pudo abrir RTSP directo")
-                return False
-            
-            # Configuración optimizada para RTSP
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            self.cap.set(cv2.CAP_PROP_FPS, 30)
-            # self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'H264'))
-            
-            # Verificar que realmente funcione
-            ret, frame = self.cap.read()
-            if ret and frame is not None:
-                logger.info(f"✅ Cámara {self.camera_id}: RTSP directo CONECTADO - Frame: {frame.shape}")
-                return True
-            else:
-                logger.warning(f"Cámara {self.camera_id}: RTSP conectado pero sin frames")
-                return True  # Devolver True igual para intentar
-                
-        except Exception as e:
-            logger.error(f"Cámara {self.camera_id}: Error en conexión directa RTSP: {str(e)}")
-            return False
-
-    def reconnect_direct(self):
-        """Reconexión para stream directo"""
-        self.reconnect_attempts += 1
-        logger.info(f"Cámara {self.camera_id}: Reconexión directa {self.reconnect_attempts}/{self.max_reconnect_attempts}")
-        
-        if self.reconnect_attempts >= self.max_reconnect_attempts and not self.alert_sent:
-            self.handle_reconnection_failure()
-            return False
-        
-        return self.connect_direct_rtsp()
-
     def save_batch(self):
         """Guardar batch coordinando con FFmpeg - VERSIÓN MEJORADA"""
         try:
@@ -1212,25 +1106,6 @@ class VideoStream:
                 logger.error(f"Cámara {self.camera_id}: Error en get_frame(): {str(e)}")
                 return None
 
-    def reconnect_camera(self):
-        """Reconectar directamente al RTSP - REEMPLAZAR"""
-        try:
-            self.reconnect_attempts += 1
-            self.last_reconnect_time = datetime.now()
-            
-            logger.info(f"Cámara {self.camera_id}: Intento de reconexión DIRECTA {self.reconnect_attempts}/{self.max_reconnect_attempts}")
-
-            if self.reconnect_attempts >= self.max_reconnect_attempts and not self.alert_sent:
-                self.handle_reconnection_failure()
-                return False
-            
-            # ✅ USAR CONEXIÓN DIRECTA
-            return self.connect_direct_rtsp()
-                
-        except Exception as e:
-            logger.error(f"Cámara {self.camera_id}: Error en reconexión directa: {str(e)}")
-            return False
-
     def handle_reconnection_failure(self):
         """Manejar fallo de reconexión después de múltiples intentos"""
         logger.error(f"Cámara {self.camera_id}: SUPERADO LÍMITE DE RECONEXIONES ({self.max_reconnect_attempts} intentos)")
@@ -1285,19 +1160,18 @@ class VideoStream:
         except Exception as e:
             logger.error(f"Cámara {self.camera_id}: Error enviando alerta a API: {str(e)}")
 
+
     def stop_components(self):
         """Detener componentes de la cámara de manera segura"""
         try:
-            # Detener timer primero
-            self.running = False
+            self.running = False # Detiene el loop de 'update'
 
-            if self.cap:
-                self.cap.release()
-                self.cap = None
-            
             if self.segmenter:
-                self.segmenter.stop()
-                
+                self.segmenter.stop() # Detiene FFmpeg (y el monitor)
+            
+            if self.stdout_pipe:
+                self.stdout_pipe.close() # Cierra el pipe
+            
             self.frame = None
             logger.info(f"Cámara {self.camera_id}: Componentes y timer detenidos")
         except Exception as e:
@@ -1316,38 +1190,14 @@ class VideoStream:
                 'active',
                 {'reason': 'manual_enable'}
             )
-            self.reconnect_camera()
+            self.start()
             logger.info(f"Cámara {self.camera_id}: Rehabilitada manualmente")
             return True
         return False
-
-    def is_capture_active(self):
-        """Verificar si la captura está realmente activa"""
-        try:
-            if not hasattr(self, 'cap') or self.cap is None:
-                return False
-            
-            if not self.cap.isOpened():
-                return False
-            
-            # Intentar leer un frame para verificar que realmente funciona
-            if hasattr(self, '_last_successful_frame') and time.time() - self._last_successful_frame < 10:
-                return True  # Asumir que sigue activa si tuvo frames recientemente
-            
-            # Verificación más agresiva
-            ret, frame = self.cap.read()
-            if ret and frame is not None:
-                self._last_successful_frame = time.time()
-                return True
-            else:
-                return False
-                
-        except Exception as e:
-            logger.debug(f"Error verificando captura cámara {self.camera_id}: {e}")
-            return False
-        
+ 
 class FFmpegSegmenter:
-    def __init__(self, cam_id, stream_url, out_dir="/tmp/segments", seg_seconds=BATCH_INTERVAL, base_port=12000):
+    def __init__(self, video_stream_instance, cam_id, stream_url, out_dir="/tmp/segments", seg_seconds=BATCH_INTERVAL, base_port=12000):
+        self.video_stream = video_stream_instance
         self.cam_id = cam_id
         self.stream_url = stream_url
         self.out_dir = Path(out_dir) / str(cam_id)
@@ -1366,7 +1216,10 @@ class FFmpegSegmenter:
             "-rtsp_transport", "tcp",  # Mejor estabilidad
             "-max_delay", "500000",    # Máximo delay para RTSP
             "-i", self.stream_url,
-            "-c", "copy",              # Sin re-encoding
+
+            # --- SALIDA 1: Segmentos MKV
+            "-c:v", "copy", # solo el video
+            "-c:a", "copy", # solo el audio (si existe)
             "-f", "segment",
             "-segment_time", str(self.seg_seconds),
             "-segment_format", "matroska",  # Formato MKV explícito
@@ -1374,7 +1227,16 @@ class FFmpegSegmenter:
             "-strftime", "1",
             "-segment_atclocktime", "1",    # Segmentos en tiempos exactos
             "-avoid_negative_ts", "make_zero",
-            f"{str(self.out_dir)}/%Y%m%d_%H%M%S.mkv"
+            f"{str(self.out_dir)}/%Y%m%d_%H%M%S.mkv",
+
+            # --- SALIDA 2: Pipe a Python
+            "-c:v", "rawvideo",       # Decodifica a video raw
+            "-an", # sin audio
+            "-pix_fmt", "bgr24",     # Formato que OpenCV entiende
+            "-s", f"{DEFAULT_OUTPUT_SIZE[0]}x{DEFAULT_OUTPUT_SIZE[1]}", # Redimensiona
+            "-r", str(MAX_FPS),      # Sincroniza FPS
+            "-f", "rawvideo",
+            "pipe:1"
         ]
 
     def start(self):
@@ -1386,7 +1248,12 @@ class FFmpegSegmenter:
                 self.stop()
 
             ffmpeg_log = open(f"/logs/ffmpeg_record_{self.cam_id}.log", "ab", buffering=0)
-            self.proc = subprocess.Popen(self.ffmpeg_args, stdout=ffmpeg_log, stderr=ffmpeg_log)
+            self.proc = subprocess.Popen(
+                self.ffmpeg_args, 
+                stdout=subprocess.PIPE,
+                stderr=ffmpeg_log,
+                bufsize=10**8 # Buffer grande para stdout
+            )
             logger.info(f"🎥 FFmpeg grabación iniciada cámara {self.cam_id} (PID: {self.proc.pid})")
 
             # Iniciar el monitoreo si no está corriendo
@@ -1394,6 +1261,8 @@ class FFmpegSegmenter:
             if self.monitor_thread is None or not self.monitor_thread.is_alive():
                 self.monitor_thread = Thread(target=self.monitor, daemon=True)
                 self.monitor_thread.start()
+            
+            return self.proc.stdout
         except Exception as e:
             logger.error(f"❌ Error FFmpeg grabación cámara {self.cam_id}: {e}")
     
@@ -1408,14 +1277,23 @@ class FFmpegSegmenter:
             return_code = self.proc.poll()
 
             if return_code is not None: # El proceso ha muerto
-                logger.error(f"❌ Monitor FFmpeg {self.cam_id}: ¡Proceso muerto! (Código: {return_code}). Reiniciando...")
+                self.video_stream.running = False
+                # Usamos el contador de la instancia de VideoStream
+                self.video_stream.reconnect_attempts += 1
+                logger.error(f"❌ Monitor FFmpeg {self.cam_id}: ¡Proceso muerto! (Código: {return_code}). Intento {self.video_stream.reconnect_attempts}/{self.video_stream.max_reconnect_attempts}")
+
+                if self.video_stream.reconnect_attempts >= self.video_stream.max_reconnect_attempts:
+                    logger.error(f"❌ FFmpeg {self.cam_id}: Límite de reinicios alcanzado. Marcando como fallida.")
+                    self.video_stream.handle_reconnection_failure() 
+                    break # Salir del monitor, la cámara está deshabilitada
+
                 try:
-                    # Esperar un poco antes de reiniciar
+                    logger.info(f"🔄 Cámara {self.cam_id}: Esperando 5s para reintentar...")
                     time.sleep(5) 
-                    if self.running: # Solo reiniciar si aún debemos estar corriendo
-                        self.start() # start() reiniciará el proceso
-                    # Salir de este hilo de monitor, start() creará uno nuevo
-                    break 
+                    if self.running: # 'self.running' (del monitor) seguirá siendo True
+                        logger.info(f"🔄 Cámara {self.cam_id}: Reiniciando stream completo (Intento {self.video_stream.reconnect_attempts})...")
+                        self.video_stream.start(is_reconnect=True) # Reinicia todo el VideoStream
+                    break
                 except Exception as e:
                     logger.error(f"❌ Error reiniciando FFmpeg {self.cam_id}: {e}")
 
@@ -1432,7 +1310,8 @@ class FFmpegSegmenter:
             return None
 
     def stop(self):
-        """Detener FFmpeg de manera segura y rápida"""
+        """Detener FFmpeg y monitor de manera segura."""
+        self.running = False
         if self.proc and self.proc.poll() is None:
             try:
                 logger.info(f"Terminando FFmpeg (PID: {self.proc.pid}) cámara {self.cam_id}")
@@ -1542,7 +1421,7 @@ def video_feed_status(camera_id):
                 "stream_active": True,
                 "stream_running": stream.running,
                 "stream_disabled": stream.disabled,
-                "has_capture": stream.cap is not None and stream.cap.isOpened() if hasattr(stream, 'cap') else False
+                "has_capture": stream.segmenter.proc and stream.segmenter.proc.poll() is None
             })
         
         return jsonify(status)
@@ -1790,7 +1669,7 @@ def debug_camera(camera_id):
                 "camera_id": camera_id_int,
                 "stream_url": stream.link_camara,
                 "running": stream.running,
-                "capture_active": stream.is_capture_active(),
+                "capture_active": stream.segmenter.proc and stream.segmenter.proc.poll() is None,
                 "has_frame": stream.frame is not None,
                 "frames_buffer_size": len(stream.frames_buffer),
                 "buffer_duration": f"{(len(stream.frames_buffer) / MAX_FPS):.1f}s",
@@ -2023,70 +1902,35 @@ def procesar_camara_simple(camera_id, nuevo_estado, camara_config, cambio_url=Fa
         logger.error(f"❌ Stack trace: {traceback.format_exc()}")
 
 def activar_camara_simple(camera_id, camara_config, cambio_url=False):
-    """Activar cámara de manera simple y robusta"""
+    """Activar cámara (Arquitectura unificada)"""
     try:
-        logger.info(f"🚀 Activando cámara {camera_id} (simple), CambioURL: {cambio_url}")
+        logger.info(f"🚀 Activando cámara {camera_id} (unificada), CambioURL: {cambio_url}")
         
         link_camara = camara_config.get("link_camara")
-        logger.info(f"🔗 URL a conectar: {link_camara}")
-
-        # Si hay cambio de URL forzar nueva instancia
+        
         if cambio_url and camera_id in video_streams:
-            logger.info(f"🔄 Forzando nueva instancia por cambio de URL para cámara {camera_id}")
+            logger.info(f"🔄 Forzando nueva instancia por cambio de URL para {camera_id}")
             detener_camara_simple(camera_id)
 
-        # Crear o obtener stream
         if camera_id not in video_streams:
             video_streams[camera_id] = VideoStream(camera_id, link_camara)
             video_streams[camera_id].socketio_manager = socketio_manager
-            logger.info(f"✅ Nueva instancia de VideoStream creada para cámara {camera_id}")
+            logger.info(f"✅ Nueva instancia de VideoStream creada para {camera_id}")
         else:
+            # Actualizar link por si acaso (el segmenter lo leerá al reiniciar)
             video_streams[camera_id].link_camara = link_camara
-            logger.info(f"✅ URL actualizada en stream existente para cámara {camera_id}")
+            video_streams[camera_id].segmenter.stream_url = link_camara
+            logger.info(f"✅ URL actualizada en stream existente para {camera_id}")
         
         stream = video_streams[camera_id]
         
-        # Configuración básica
-        stream.running = True
-        stream.disabled = False
-        stream.reconnect_attempts = 0
-        stream.alert_sent = False
-
-        # Conectar directamente al RTSP
-        success = stream.connect_direct_rtsp()
+        # Iniciar el stream (esto inicia FFmpeg, el monitor y el hilo 'update')
+        stream.start()
         
-        if success:
-            # Iniciar/Reiniciar el thread principal
-            if stream.thread is None or not stream.thread.is_alive():
-                stream.thread = Thread(target=stream.update, daemon=True)
-                stream.thread.start()
-                logger.info(f"✅ Nuevo thread iniciado para cámara {camera_id}")
-            else:
-                logger.info(f"ℹ️ Thread ya activo para cámara {camera_id}")
-        else:
-            logger.error(f"❌ Cámara {camera_id}: No se pudo conectar RTSP directo")
-        
-        # Iniciar/Reiniciar segmenter si no existe
-        if cambio_url or stream.segmenter is None:
-            if stream.segmenter:
-                stream.segmenter.stop()
-            stream.segmenter = FFmpegSegmenter(
-                camera_id, 
-                link_camara, 
-                seg_seconds=BATCH_INTERVAL
-            )
-            logger.info(f"✅ Segmenter reinicializado para cámara {camera_id}")
-        
-        # Iniciar FFmpeg
-        if stream.segmenter.proc is None or stream.segmenter.proc.poll() is not None:
-            stream.segmenter.start()
-            logger.info(f"✅ FFmpeg iniciado/reiniciado para cámara {camera_id}")
-        
-        # Confirmar estado final
         socketio_manager.send_camera_status(
             camera_id, 
-            'active' if success else 'inactive',
-            {'reason': 'stream_ready', 'url_changed': cambio_url}
+            'active' if stream.running else 'error',
+            {'reason': 'stream_start', 'url_changed': cambio_url}
         )
         
     except Exception as e:
@@ -2196,34 +2040,6 @@ def actualizar_estado_camara(camera_id):
             'success': False,
             'message': str(e)
         }), 500
-
-def verificar_estado_real_camaras():
-    """Verificar el estado real de las cámaras vs estado reportado"""
-    try:
-        for camera_id, stream in video_streams.items():
-            estado_reportado = stream.running and not stream.disabled
-            estado_real = stream.is_capture_active()
-            
-            if estado_reportado != estado_real:
-                logger.warning(f"📡 Cámara {camera_id}: Estado inconsistente - "
-                             f"Reportado: {estado_reportado}, Real: {estado_real}")
-                
-                # ✅ CORREGIR ESTADO INCONSISTENTE
-                if estado_reportado and not estado_real:
-                    # La cámara debería estar activa pero no está capturando
-                    logger.info(f"🔄 Reintentando conexión para cámara {camera_id}")
-                    stream.reconnect_camera()
-                    
-    except Exception as e:
-        logger.error(f"Error verificando estado de cámaras: {e}")
-
-# Ejecutar verificación periódica cada 30 segundos
-def iniciar_verificador_estado():
-    while True:
-        time.sleep(30)
-        verificar_estado_real_camaras()
-
-threading.Thread(target=iniciar_verificador_estado, daemon=True).start()
 
 if __name__ == '__main__':
     socketio.run(
