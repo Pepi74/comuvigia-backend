@@ -699,6 +699,7 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
           merodeos: 0,
           portonazos: 0,
           asaltos_hogar: 0,
+          alertas_confirmadas: 0,
         };
       }
 
@@ -706,6 +707,7 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
       sectores[idSector].merodeos += Number(row.merodeos) || 0;
       sectores[idSector].portonazos += Number(row.portonazos) || 0;
       sectores[idSector].asaltos_hogar += Number(row.asaltos_hogar) || 0;
+      sectores[idSector].alertas_confirmadas += Number(row.alertas_confirmadas) || 0;
     });
 
     // === 3️⃣ Distribución horaria (sin truncamiento) ===
