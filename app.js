@@ -3,6 +3,7 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
+import { connectRedis } from './config/redis.js'
 import indexRoutes from './routes/index.js'
 import camarasRoutes from './routes/camaras.js'
 import alertasRoutes from './routes/alertas.js'
@@ -13,6 +14,8 @@ import sectoresRoutes from './routes/sectores.js';
 import reglasRoutes from './routes/reglas.js'
 import informeRoutes from './routes/informe.js';
 import cookieParser from 'cookie-parser'
+
+await connectRedis();
 
 dotenv.config()
 
@@ -25,8 +28,6 @@ const io = new Server(httpServer, {
     credentials: true
   },
 });
-
-export { io, controlCamera, updateCameraStatus, notifyFlaskCameraUpdate };
 
 app.use(cors({
   origin: process.env.FRONTEND_URL,
@@ -116,8 +117,11 @@ function notifyFlaskCameraUpdate(action, cameraData) {
   }
 }
 
-
-const PORT = process.env.PORT
-httpServer.listen(PORT, () => {
-  console.log(`Servidor escuchando en puerto ${PORT}`);
-});
+export {
+  app,
+  httpServer,
+  io,
+  controlCamera,
+  updateCameraStatus,
+  notifyFlaskCameraUpdate
+};

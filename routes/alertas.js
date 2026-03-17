@@ -1,21 +1,13 @@
 // Endpoints para alertas
 import { Router } from 'express'
 import pool from '../config/db.js'
-import { createClient } from 'redis';
+import redisClient from '../config/redis.js';
 import { io } from '../app.js';
 import { verificarToken } from '../middlewares/auth.js';
 import { verificarRol } from '../middlewares/roles.js';
 import { crearAlertaBase } from '../services/alert.service.js';
 
 const router = Router()
-
-// Conexión a Redis
-const redisClient = createClient(
-  {
-    url: 'redis://redis:6379',
-  }
-);
-await redisClient.connect();
 
 router.get('/', verificarToken, verificarRol([1, 2]), async (_, res) => {
   try {
