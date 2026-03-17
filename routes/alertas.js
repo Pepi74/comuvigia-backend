@@ -5,6 +5,7 @@ import { createClient } from 'redis';
 import { io } from '../app.js';
 import { verificarToken } from '../middlewares/auth.js';
 import { verificarRol } from '../middlewares/roles.js';
+import { crearAlertaBase } from '../services/alert.service.js';
 
 const router = Router()
 
@@ -43,48 +44,13 @@ router.post('/nueva-alerta', async (req, res) => {
     const alerta = req.body;
     const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, estado, frames, fps } = alerta;
 
-    // 1. Primero insertar la alerta en la BD
-    let result;
-    if (estado !== undefined && estado !== null) {
-      const status = parseInt(estado);
-      if (descripcion_suceso) {
-        result = await pool.query(
-          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, estado) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-          [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, status]
-        );
-      } else {
-        result = await pool.query(
-          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, estado) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-          [id_camara, mensaje, hora_suceso, tipo, score_confianza, status]
-        );
-      }
-    } else {
-      if (descripcion_suceso) {
-        result = await pool.query(
-          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-          [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso]
-        );
-      } else {
-        result = await pool.query(
-          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza)
-           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-          [id_camara, mensaje, hora_suceso, tipo, score_confianza]
-        );
-      }
-    }
+    const nuevaAlerta = await crearAlertaBase({
+      alerta,
+      pool,
+      redisClient,
+      io
+    });
 
-    const nuevaAlerta = result.rows[0];
-
-    const sector = await pool.query(
-      "SELECT id_sector FROM camaras WHERE id = $1", [id_camara]
-    )
-
-    console.log(sector.rows[0].id_sector)
-    nuevaAlerta.id_sector = sector.rows[0].id_sector
-
-    console.log(typeof(frames))
-    // 2. Si hay frames, guardarlos en S3 y obtener el key
     if (frames && frames.length > 0) {
       console.log(id_camara)
       try {
@@ -131,14 +97,6 @@ router.post('/nueva-alerta', async (req, res) => {
         res.status(500).json({ error: s3Error });
       }
     } else{console.log("jaime")}
-
-    // 4. Guardar en Redis y emitir WebSocket
-    await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
-    await redisClient.set(`alerta:${nuevaAlerta.id}`, JSON.stringify(nuevaAlerta));
-    if (nuevaAlerta.estado === 0) await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
-    await redisClient.lTrim('alertas', 0, 99);
-
-    io.emit('nueva-alerta', nuevaAlerta);
 
     res.status(201).json(nuevaAlerta);
 
