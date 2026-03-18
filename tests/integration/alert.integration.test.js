@@ -27,6 +27,14 @@ describe('POST /api/alertas/nueva-alerta (integración)', () => {
     expect(res.body.mensaje).toBe('Test integración');
     expect(res.body).toHaveProperty('hora_suceso');
   });
+
+  it('debe fallar si faltan datos', async () => {
+    const res = await request(app)
+      .post('/api/alertas/nueva-alerta')
+      .send({});
+
+    expect(res.statusCode).toBe(500);
+  });
 });
 
 afterAll(async () => {

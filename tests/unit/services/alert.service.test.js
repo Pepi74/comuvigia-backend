@@ -50,7 +50,7 @@ describe('crearAlertaBase', () => {
             io: mockIo
             })
         ).rejects.toThrow('Datos de alerta incompletos');
-    });
+    }); 
 
     it('no agrega a alertas_no_vistas si la alerta está vista', async () => {
         mockPool.query
@@ -93,6 +93,4 @@ describe('crearAlertaBase', () => {
                 })
             ).rejects.toThrow('DB error');
         });
-
-
 });
