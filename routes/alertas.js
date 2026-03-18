@@ -44,7 +44,7 @@ router.post('/nueva-alerta', async (req, res) => {
     });
 
     if (frames && frames.length > 0) {
-      console.log(id_camara)
+      //console.log(id_camara)
       try {
         const metadata = {
           alert_id: nuevaAlerta.id,
@@ -66,7 +66,7 @@ router.post('/nueva-alerta', async (req, res) => {
             fps: fps
           })
         });
-        console.log(response)
+        //console.log(response)
         const s3Result = await response.json();
 
         if (s3Result.success) {
@@ -88,7 +88,7 @@ router.post('/nueva-alerta', async (req, res) => {
         // No guardar la alerta completa si hay error con los frames
         res.status(500).json({ error: s3Error });
       }
-    } else{console.log("jaime")}
+    } //else{console.log("jaime")}
 
     res.status(201).json(nuevaAlerta);
 
