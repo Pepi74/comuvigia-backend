@@ -14,7 +14,7 @@ describe('POST /api/alertas/nueva-alerta (integración)', () => {
       id_camara: 1,
       mensaje: 'Test integración',
       hora_suceso: new Date().toISOString(),
-      tipo: 1,
+      tipo: 99,
       score_confianza: 0.92
     };
 

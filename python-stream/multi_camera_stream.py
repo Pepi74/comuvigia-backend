@@ -31,6 +31,16 @@ from flask import Flask, Response, jsonify, request
 from video_reconstructor import video_bp, video_reconstructor
 from flask_cors import CORS
 import socketio as socketio_client
+import unicodedata
+
+def sanitize_metadata(metadata: dict) -> dict:
+    clean = {}
+    for k, v in metadata.items():
+        if isinstance(v, str):
+            v = unicodedata.normalize('NFKD', v).encode('ascii', 'ignore').decode('ascii')
+        clean[k] = str(v)
+    return clean
+
 SOCKETIO_BACKEND_URL = "http://backend:3000"
 
 
@@ -40,7 +50,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 app.register_blueprint(video_bp, url_prefix='/')
 start_time = time.time()
 camera_queue = queue.Queue()
-
+TEST_MODE = os.getenv("NODE_ENV", "false") == "test"
 
 # Cliente Socket.IO
 sio = socketio_client.Client()
@@ -1478,27 +1488,36 @@ def save_frames():
         
         # Procesar los frames
         processed_frames = []
+
+        if TEST_MODE:
+            logger.info("TEST_MODE activo: simulando frames")
+
+            dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+            processed_frames = [dummy_frame for _ in range(len(frames_data))]
+
+        else:
         
-        for frame_data in frames_data:
-            frame = None
-            # Diferentes formatos de frame
-            if isinstance(frame_data, str) and frame_data.startswith('data:image'):
-                # Base64 con header data:image
-                frame = decode_base64_frame(frame_data)
-            elif isinstance(frame_data, str):
-                # Base64 simple
-                frame = decode_base64_simple(frame_data)
-            elif isinstance(frame_data, dict) and 'image_data' in frame_data:
-                # Formato estructurado
-                frame = decode_structured_frame(frame_data)
-            else:
-                return jsonify({'error': 'Formato de frame no soportado'}), 400
+            for frame_data in frames_data:
+                frame = None
+                # Diferentes formatos de frame
+                if isinstance(frame_data, str) and frame_data.startswith('data:image'):
+                    # Base64 con header data:image
+                    frame = decode_base64_frame(frame_data)
+                elif isinstance(frame_data, str):
+                    # Base64 simple
+                    frame = decode_base64_simple(frame_data)
+                elif isinstance(frame_data, dict) and 'image_data' in frame_data:
+                    # Formato estructurado
+                    frame = decode_structured_frame(frame_data)
+                else:
+                    return jsonify({'error': 'Formato de frame no soportado'}), 400
+                
+                if frame is not None:
+                    processed_frames.append(frame)
             
-            if frame is not None:
-                processed_frames.append(frame)
-        
-        if not processed_frames:
-            return jsonify({'error': 'No se pudieron procesar los frames'}), 400
+            if not processed_frames:
+                return jsonify({'error': 'No se pudieron procesar los frames'}), 400
         
         # Subir batch a S3
         timestamp = datetime.now()
@@ -1506,9 +1525,11 @@ def save_frames():
         recording_start = timestamp - timedelta(seconds=recording_duration)
         recording_end = timestamp
 
+        safe_metadata = sanitize_metadata(metadata)
+
         # Metadata adicional
         full_metadata = {
-            **metadata,
+            **safe_metadata,
             'source': 'api-save-frames',
             'received_timestamp': datetime.now().isoformat(),
             'frames_count': len(processed_frames),
