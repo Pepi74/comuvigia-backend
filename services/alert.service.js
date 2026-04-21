@@ -21,7 +21,7 @@ export async function crearAlertaBase({
   let result;
 
   if (estado !== undefined && estado !== null) {
-    const status = parseInt(estado);
+    const status = Number.parseInt(estado);
     if (descripcion_suceso) {
       result = await pool.query(
         `INSERT INTO alertas 

@@ -492,7 +492,7 @@ router.get('/estadisticas-camara',verificarToken, verificarRol([1, 2]), async (r
     } else {
       endDate = new Date();
       startDate = new Date();
-      startDate.setDate(endDate.getDate() - parseInt(dias));
+      startDate.setDate(endDate.getDate() - Number.parseInt(dias));
     }
 
     const fechaInicioStr = startDate.toISOString().replace('T', ' ').substring(0, 19);
@@ -504,7 +504,7 @@ router.get('/estadisticas-camara',verificarToken, verificarRol([1, 2]), async (r
     client = await pool.connect();
 
     const query = `SELECT * FROM reporte_alertas_por_camara($1, $2, $3, $4)`;
-    const result = await client.query(query, [fechaInicioStr, fechaFinStr, grupo, parseInt(id_camara)]);
+    const result = await client.query(query, [fechaInicioStr, fechaFinStr, grupo, Number.parseInt(id_camara)]);
 
     if (result.rows.length === 0) {
       return res.json({
@@ -541,14 +541,14 @@ router.get('/estadisticas-camara',verificarToken, verificarRol([1, 2]), async (r
     };
 
     result.rows.forEach(row => {
-      totales.total_alertas += parseInt(row.total_alertas) || 0;
-      totales.alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
-      totales.falsos_positivos += parseInt(row.falsos_positivos) || 0;
-      totales.merodeos += parseInt(row.merodeos) || 0;
-      totales.portonazos += parseInt(row.portonazos) || 0;
-      totales.asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
-      totales.no_especificados += parseInt(row.no_especificados) || 0;
-      totales.confianza_promedio += parseFloat(row.confianza_promedio) || 0;
+      totales.total_alertas += Number.parseInt(row.total_alertas) || 0;
+      totales.alertas_confirmadas += Number.parseInt(row.alertas_confirmadas) || 0;
+      totales.falsos_positivos += Number.parseInt(row.falsos_positivos) || 0;
+      totales.merodeos += Number.parseInt(row.merodeos) || 0;
+      totales.portonazos += Number.parseInt(row.portonazos) || 0;
+      totales.asaltos_hogar += Number.parseInt(row.asaltos_hogar) || 0;
+      totales.no_especificados += Number.parseInt(row.no_especificados) || 0;
+      totales.confianza_promedio += Number.parseFloat(row.confianza_promedio) || 0;
     });
 
     // Promedio de confianza
@@ -592,7 +592,7 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
     } else {
       endDate = new Date();
       startDate = new Date();
-      startDate.setDate(startDate.getDate() - parseInt(dias));
+      startDate.setDate(startDate.getDate() - Number.parseInt(dias));
     }
 
     // ✅ formato compatible con PostgreSQL TIMESTAMP
