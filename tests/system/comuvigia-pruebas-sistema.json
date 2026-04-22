@@ -1,14 +1,115 @@
 {
   "info": {
-    "_postman_id": "32a20bb8-d9ee-423e-b444-684c253fe5fa",
+    "_postman_id": "4e669cf2-faeb-460f-9b5c-dcf7c9e2f8fe",
     "name": "ComuvigIA - Pruebas de Sistema",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "51546534",
-    "_collection_link": "https://go.postman.co/collection/51546534-32a20bb8-d9ee-423e-b444-684c253fe5fa?source=collection_link"
+    "_collection_link": "https://go.postman.co/collection/51546534-4e669cf2-faeb-460f-9b5c-dcf7c9e2f8fe?source=collection_link"
   },
   "item": [
     {
-      "name": "CP-01 Acceso a endpoint protegido sin token",
+      "name": "CP-01 - Registro de usuario nuevo exitoso",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 201\", () =>\r",
+              "  pm.response.to.have.status(201));\r",
+              "\r",
+              "pm.test(\"Retorna id y usuario\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.have.property(\"id\");\r",
+              "  pm.expect(body).to.have.property(\"usuario\");\r",
+              "  pm.expect(body).to.have.property(\"rol\");\r",
+              "});\r",
+              "\r",
+              "pm.collectionVariables.set(\r",
+              "  \"usuario_creado_id\", pm.response.json().id\r",
+              ");"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"usuario\": \"test_{{$timestamp}}\",\r\n  \"contrasena\": \"Test1234!\",\r\n  \"nombre\": \"Usuario de Prueba\",\r\n  \"rol\": 1\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/usuarios/register",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "usuarios",
+            "register"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-02 - Registro rechaza campos incompletos",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 400\", () =>\r",
+              "  pm.response.to.have.status(400));\r",
+              "\r",
+              "pm.test(\"Mensaje de error presente\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.have.property(\"error\");\r",
+              "  pm.expect(body.error).to.include(\"campos\");\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"usuario\": \"test_incompleto\",\r\n  \"contrasena\": \"Test1234!\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/usuarios/register",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "usuarios",
+            "register"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-03 - Acceso a endpoint protegido sin token",
       "event": [
         {
           "listen": "test",
@@ -46,23 +147,23 @@
       "response": []
     },
     {
-      "name": "CP-02 Login correcto",
+      "name": "CP-04 - Login correcto admin",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-01: Status 200\", function () {\r",
+              "pm.test(\"CP-04: Status 200\", function () {\r",
               "    pm.response.to.have.status(200);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-01: Retorna usuario y rol\", function () {\r",
+              "pm.test(\"CP-04: Retorna usuario y rol\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.have.property('usuario');\r",
               "    pm.expect(body).to.have.property('rol');\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-01: Cookie token presente\", function () {\r",
+              "pm.test(\"CP-04: Cookie token presente\", function () {\r",
               "    pm.expect(pm.cookies.has('token')).to.be.true;\r",
               "});"
             ],
@@ -99,17 +200,17 @@
       "response": []
     },
     {
-      "name": "CP-03 Login contraseña incorrecta",
+      "name": "CP-05 - Login contraseña incorrecta",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-02: Status 401\", function () {\r",
+              "pm.test(\"CP-05: Status 401\", function () {\r",
               "    pm.response.to.have.status(401);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-02: Mensaje de error presente\", function () {\r",
+              "pm.test(\"CP-05: Mensaje de error presente\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.have.property('mensaje');\r",
               "});"
@@ -147,22 +248,22 @@
       "response": []
     },
     {
-      "name": "CP-04 - Obtener alertas con token válido",
+      "name": "CP-06 - Obtener alertas con token válido",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-04: Status 200\", function () {\r",
+              "pm.test(\"CP-06: Status 200\", function () {\r",
               "    pm.response.to.have.status(200);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-04: Respuesta es un array\", function () {\r",
+              "pm.test(\"CP-06: Respuesta es un array\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.be.an('array');\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-04: Tiempo de respuesta menor a 500ms\", function () {\r",
+              "pm.test(\"CP-06: Tiempo de respuesta menor a 500ms\", function () {\r",
               "    pm.expect(pm.response.responseTime).to.be.below(500);\r",
               "});"
             ],
@@ -189,29 +290,28 @@
       "response": []
     },
     {
-      "name": "CP-05 - Crear alerta simulada (sin frames)",
+      "name": "CP-07 - Crear alerta simulada (sin frames)",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-05: Status 201\", function () {\r",
+              "pm.test(\"CP-07: Status 201\", function () {\r",
               "    pm.response.to.have.status(201);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-05: Alerta tiene id asignado\", function () {\r",
+              "pm.test(\"CP-07: Alerta tiene id asignado\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.have.property('id');\r",
               "    pm.expect(body.id).to.be.a('number');\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-05: Datos correctos en respuesta\", function () {\r",
+              "pm.test(\"CP-07: Datos correctos en respuesta\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body.mensaje).to.eql('Merodeo detectado - Test sistema');\r",
               "    pm.expect(body.tipo).to.eql(1);\r",
               "});\r",
               "\r",
-              "// Guardamos el id para usarlo en CP-07\r",
               "pm.collectionVariables.set('alerta_id', pm.response.json().id);"
             ],
             "type": "text/javascript",
@@ -247,17 +347,17 @@
       "response": []
     },
     {
-      "name": "CP-06 - Consultar alertas de cámara inexistente",
+      "name": "CP-08 - Consultar alertas de cámara inexistente",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-06: Status 200\", function () {\r",
+              "pm.test(\"CP-08: Status 200\", function () {\r",
               "    pm.response.to.have.status(200);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-06: Retorna array vacío\", function () {\r",
+              "pm.test(\"CP-08: Retorna array vacío\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.be.an('array');\r",
               "    pm.expect(body).to.have.lengthOf(0);\r",
@@ -288,23 +388,23 @@
       "response": []
     },
     {
-      "name": "CP-07 - Verificar persistencia de alerta en Redis",
+      "name": "CP-09 - Verificar persistencia de alerta en Redis",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-07: Status 200\", function () {\r",
+              "pm.test(\"CP-09: Status 200\", function () {\r",
               "    pm.response.to.have.status(200);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-07: Retorna array de alertas\", function () {\r",
+              "pm.test(\"CP-09: Retorna array de alertas\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.be.an('array');\r",
               "    pm.expect(body.length).to.be.above(0);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-07: Alerta de CP-05 persiste en Redis\", function () {\r",
+              "pm.test(\"CP-09: Alerta de CP-05 persiste en Redis\", function () {\r",
               "    const body = pm.response.json();\r",
               "    const alertaId = pm.collectionVariables.get('alerta_id');\r",
               "    const encontrada = body.find(a => a.id === alertaId);\r",
@@ -335,34 +435,33 @@
       "response": []
     },
     {
-      "name": "CP-08 - Crear cámara con datos válidos",
+      "name": "CP-10 - Crear cámara con datos válidos",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-08: Status 201\", function () {\r",
+              "pm.test(\"CP-10: Status 201\", function () {\r",
               "    pm.response.to.have.status(201);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-08: Cámara tiene id asignado\", function () {\r",
+              "pm.test(\"CP-10: Cámara tiene id asignado\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.have.property('id');\r",
               "    pm.expect(body.id).to.be.a('number');\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-08: Datos correctos en respuesta\", function () {\r",
+              "pm.test(\"CP-10: Datos correctos en respuesta\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body.nombre).to.eql('Cam Test Sistema');\r",
               "    pm.expect(body.direccion).to.eql('Av. Principal 123');\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-08: Link externo generado\", function () {\r",
+              "pm.test(\"CP-10: Link externo generado\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.have.property('link_camara_externo');\r",
               "});\r",
               "\r",
-              "// Guardamos el id para limpieza posterior si es necesario\r",
               "pm.collectionVariables.set('camara_id', pm.response.json().id);"
             ],
             "type": "text/javascript",
@@ -397,17 +496,17 @@
       "response": []
     },
     {
-      "name": "CP-09 - Crear cámara sin campos obligatorios",
+      "name": "CP-11 - Crear cámara sin campos obligatorios",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-09: Status 400\", function () {\r",
+              "pm.test(\"CP-11: Status 400\", function () {\r",
               "    pm.response.to.have.status(400);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-09: Mensaje de error descriptivo\", function () {\r",
+              "pm.test(\"CP-11: Mensaje de error descriptivo\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.have.property('error');\r",
               "    pm.expect(body.error).to.include('nombre');\r",
@@ -445,22 +544,22 @@
       "response": []
     },
     {
-      "name": "CP-10 - Obtener alertas no vistas",
+      "name": "CP-12 - Obtener alertas no vistas",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-11: Status 200\", function () {\r",
+              "pm.test(\"CP-12: Status 200\", function () {\r",
               "    pm.response.to.have.status(200);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-11: Retorna array\", function () {\r",
+              "pm.test(\"CP-12: Retorna array\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.be.an('array');\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-11: Alerta de CP-05 está en no vistas\", function () {\r",
+              "pm.test(\"CP-12: Alerta de CP-07 está en no vistas\", function () {\r",
               "    const body = pm.response.json();\r",
               "    const alertaId = pm.collectionVariables.get('alerta_id');\r",
               "    const encontrada = body.find(a => a.id === alertaId);\r",
@@ -509,22 +608,22 @@
       "response": []
     },
     {
-      "name": "CP-11 - Marcar alerta como vista",
+      "name": "CP-13 - Marcar alerta como vista",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-12: Status 200\", function () {\r",
+              "pm.test(\"CP-13: Status 200\", function () {\r",
               "    pm.response.to.have.status(200);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-12: Respuesta ok true\", function () {\r",
+              "pm.test(\"CP-13: Respuesta ok true\", function () {\r",
               "    const body = pm.response.json();\r",
               "    pm.expect(body).to.have.property('ok', true);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-12: Alerta ya no está en no vistas\", function () {\r",
+              "pm.test(\"CP-13: Alerta ya no está en no vistas\", function () {\r",
               "    const alertaId = pm.collectionVariables.get('alerta_id');\r",
               "    pm.sendRequest({\r",
               "        url: pm.variables.get('base_url') + '/api/alertas/no-vistas',\r",
@@ -570,7 +669,171 @@
       "response": []
     },
     {
-      "name": "CP-12 - Logout limpia sesión",
+      "name": "CP-14 - Admin obtiene listado de usuarios",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 200\", () =>\r",
+              "  pm.response.to.have.status(200));\r",
+              "\r",
+              "pm.test(\"Retorna array de usuarios\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.be.an(\"array\");\r",
+              "  pm.expect(body.length).to.be.above(0);\r",
+              "});\r",
+              "\r",
+              "pm.test(\"Usuarios sin campo contrasena\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  body.forEach(u =>\r",
+              "    pm.expect(u).to.not.have.property(\"contrasena\")\r",
+              "  );\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/usuarios",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "usuarios"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-15 - Usuario inexistente retorna 404",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 200\", () =>\r",
+              "  pm.response.to.have.status(200));\r",
+              "\r",
+              "pm.test(\"Retorna array de usuarios\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.be.an(\"array\");\r",
+              "  pm.expect(body.length).to.be.above(0);\r",
+              "});\r",
+              "\r",
+              "pm.test(\"Usuarios sin campo contrasena\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  body.forEach(u =>\r",
+              "    pm.expect(u).to.not.have.property(\"contrasena\")\r",
+              "  );\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/usuarios",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "usuarios"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-16 - Admin crea sector correctamente",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 201\", () =>\r",
+              "  pm.response.to.have.status(201));\r",
+              "\r",
+              "pm.test(\"Retorna sector creado con id\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.have.property(\"id\");\r",
+              "});\r",
+              "\r",
+              "pm.collectionVariables.set(\r",
+              "  \"sector_creado_id\", pm.response.json().id\r",
+              ");"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"nombre\": \"Sector Test {{$timestamp}}\",\r\n  \"descripcion\": \"Descripción Sector Test {{$timestamp}}\",\r\n  \"coordinates\": [[\r\n    [-70.65, -33.45],\r\n    [-70.64, -33.45],\r\n    [-70.64, -33.46],\r\n    [-70.65, -33.46],\r\n    [-70.65, -33.45]\r\n  ]]\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/sectores",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "sectores"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-17 - Logout Admin limpia sesión",
       "event": [
         {
           "listen": "test",
@@ -613,24 +876,893 @@
       "response": []
     },
     {
-      "name": "CP-13 - Flujo E2E completo",
+      "name": "CP-18 - Reglas requieren autenticación",
       "event": [
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"CP-13: Sistema mantiene alertas tras flujo completo\", function () {\r",
+              "pm.test(\"Status 401\", () =>\r",
+              "  pm.response.to.have.status(401));\r",
+              "\r",
+              "pm.test(\"Mensaje no autorizado\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.have.property('mensaje', 'Operación no autorizada');\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n    \"estado\": 1\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/reglas/obtener",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "reglas",
+            "obtener"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-19 - Informe requiere autenticación",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 401\", () =>\r",
+              "  pm.response.to.have.status(401));\r",
+              "\r",
+              "pm.test(\"Mensaje no autorizado\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.have.property('mensaje', 'Operación no autorizada');\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "pm.request.headers.remove(\"Cookie\");"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n    \"estado\": 1\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/reglas/obtener",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "reglas",
+            "obtener"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-20 - Login correcto funcionario",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"CP-20: Status 200\", function () {\r",
               "    pm.response.to.have.status(200);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-13: Alerta de CP-05 persiste en ultimas\", function () {\r",
+              "pm.test(\"CP-20: Retorna usuario y rol\", function () {\r",
+              "    const body = pm.response.json();\r",
+              "    pm.expect(body).to.have.property('usuario');\r",
+              "    pm.expect(body).to.have.property('rol');\r",
+              "});\r",
+              "\r",
+              "pm.test(\"CP-20: Cookie token presente\", function () {\r",
+              "    pm.expect(pm.cookies.has('token')).to.be.true;\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n    \"usuario\": \"funcionario\",\r\n    \"contrasena\": \"123\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/auth/login",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "login"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-21 - Funcionario no puede listar usuarios",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 403\", () =>\r",
+              "  pm.response.to.have.status(403));\r",
+              "\r",
+              "pm.test(\"Mensaje acceso denegado\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.have.property('mensaje', 'Acceso denegado: no tienes permisos suficientes');\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/usuarios",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "usuarios"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-22 - Funcionario obtiene usuario por ID",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 200\", () =>\r",
+              "  pm.response.to.have.status(200));\r",
+              "\r",
+              "pm.test(\"Retorna usuario correcto\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.have.property(\"id\");\r",
+              "  pm.expect(body.id).to.eql(\r",
+              "    pm.collectionVariables.get(\"usuario_creado_id\")\r",
+              "  );\r",
+              "  pm.expect(body).to.not.have.property(\"contrasena\");\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/usuarios/{{usuario_creado_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "usuarios",
+            "{{usuario_creado_id}}"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-23 - Sectores con conteo de alertas por rango",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 200\", () =>\r",
+              "  pm.response.to.have.status(200));\r",
+              "\r",
+              "pm.test(\"Retorna array de sectores\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.be.an(\"array\");\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/sectores?fecha_inicio=2024-01-01T00:00:00&fecha_fin=2025-12-31T23:59:59",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "sectores"
+          ],
+          "query": [
+            {
+              "key": "fecha_inicio",
+              "value": "2024-01-01T00:00:00"
+            },
+            {
+              "key": "fecha_fin",
+              "value": "2025-12-31T23:59:59"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-24 - Sectores rechaza request sin fechas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 400\", () =>\r",
+              "  pm.response.to.have.status(400));\r",
+              "\r",
+              "pm.test(\"Mensaje sobre fechas requeridas\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body.error).to.include(\"fecha\");\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/sectores",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "sectores"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-25 - Sectores retorna total histórico de alertas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 200\", () =>\r",
+              "  pm.response.to.have.status(200));\r",
+              "\r",
+              "pm.test(\"Retorna array con sectores\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.be.an(\"array\");\r",
+              "  pm.expect(body.length).to.be.above(0);\r",
+              "});\r",
+              "\r",
+              "pm.test(\"Cada sector tiene nombre y total_alertas\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  body.forEach(s => {\r",
+              "    pm.expect(s).to.have.property(\"nombre_sector\");\r",
+              "    pm.expect(s).to.have.property(\"total_alertas\");\r",
+              "  });\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/sectores/alltime",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "sectores",
+            "alltime"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-26 - Funcionario no puede crear sectores",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 403\", () =>\r",
+              "  pm.response.to.have.status(403));\r",
+              "\r",
+              "pm.test(\"Error de acceso presente\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.have.property('mensaje', 'Acceso denegado: no tienes permisos suficientes');\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"nombre\": \"Sector No Autorizado\",\r\n  \"descripcion\": \"Descripción Sector No Autorizado\",\r\n  \"coordinates\": []\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/sectores",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "sectores"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-27 - Listado de reglas con estructura correcta",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 200\", () =>\r",
+              "  pm.response.to.have.status(200));\r",
+              "\r",
+              "pm.test(\"Retorna array de reglas\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.be.an(\"array\");\r",
+              "  pm.expect(body.length).to.be.above(0);\r",
+              "});\r",
+              "\r",
+              "pm.test(\"Estructura de regla correcta\", () => {\r",
+              "  const regla = pm.response.json()[0];\r",
+              "  pm.expect(regla).to.have.property(\"id\");\r",
+              "  pm.expect(regla).to.have.property(\"riesgo\");\r",
+              "  pm.expect(regla).to.have.property(\"tipoAlerta\");\r",
+              "  pm.expect(regla.tipoAlerta).to.be.an(\"array\");\r",
+              "  pm.expect(regla).to.have.property(\"score\");\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/reglas/obtener",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "reglas",
+            "obtener"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-28 - Sectores disponibles para selector de reglas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 200\", () =>\r",
+              "  pm.response.to.have.status(200));\r",
+              "\r",
+              "pm.test(\"Retorna array con id y nombre_sector\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.be.an(\"array\");\r",
+              "  pm.expect(body[0]).to.have.property(\"id\");\r",
+              "  pm.expect(body[0]).to.have.property(\"nombre_sector\");\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/reglas/sectores",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "reglas",
+            "sectores"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-29 - Inserción de regla nueva exitosa",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 201\", () =>\r",
+              "  pm.response.to.have.status(201));\r",
+              "\r",
+              "pm.test(\"Retorna id de regla creada\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body).to.have.property(\"id\");\r",
+              "  pm.expect(body.id).to.be.a(\"number\");\r",
+              "});\r",
+              "\r",
+              "pm.collectionVariables.set(\r",
+              "  \"regla_creada_id\", pm.response.json().id\r",
+              ");"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"riesgo\": \"alto\",\r\n  \"tipoAlerta\": \"1, 2\",\r\n  \"horaInicio\": \"22:00\",\r\n  \"horaFin\": \"06:00\",\r\n  \"score\": 80,\r\n  \"sector\": \"Sector Test\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/reglas/insertar",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "reglas",
+            "insertar"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-30 - Inserción rechaza regla sin campos obligatorios",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 400\", () =>\r",
+              "  pm.response.to.have.status(400));\r",
+              "\r",
+              "pm.test(\"Mensaje campos obligatorios\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body.error).to.include(\"campos\");\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"tipoAlerta\": \"1, 2\",\r\n  \"sector\": \"Sector Test\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/reglas/insertar",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "reglas",
+            "insertar"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-31 - Generación de PDF con rango de fechas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 200\", () =>\r",
+              "  pm.response.to.have.status(200));\r",
+              "\r",
+              "pm.test(\"Content-Type es PDF\", () => {\r",
+              "  pm.expect(pm.response.headers.get(\"Content-Type\"))\r",
+              "    .to.include(\"application/pdf\");\r",
+              "});\r",
+              "\r",
+              "pm.test(\"Body no vacío — PDF generado\", () => {\r",
+              "  pm.expect(pm.response.responseSize).to.be.above(1000);\r",
+              "});\r",
+              "\r",
+              "pm.test(\"Header Content-Disposition presente\", () => {\r",
+              "  const disp = pm.response.headers.get(\"Content-Disposition\");\r",
+              "  pm.expect(disp).to.include(\"attachment\");\r",
+              "  pm.expect(disp).to.include(\".pdf\");\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/informe/generar-pdf?fechaInicio=2024-01-01T00:00:00&fechaFin=2025-12-31T23:59:59",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "informe",
+            "generar-pdf"
+          ],
+          "query": [
+            {
+              "key": "fechaInicio",
+              "value": "2024-01-01T00:00:00"
+            },
+            {
+              "key": "fechaFin",
+              "value": "2025-12-31T23:59:59"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-32 - Generación de PDF usa últimos 7 días por defecto",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status 200 — usa últimos 7 días por defecto\", () =>\r",
+              "  pm.response.to.have.status(200));\r",
+              "\r",
+              "pm.test(\"Content-Type es PDF\", () => {\r",
+              "  pm.expect(pm.response.headers.get(\"Content-Type\"))\r",
+              "    .to.include(\"application/pdf\");\r",
+              "});\r",
+              "\r",
+              "pm.test(\"PDF generado con tamaño razonable\", () => {\r",
+              "  pm.expect(pm.response.responseSize).to.be.above(1000);\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/informe/generar-pdf",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "informe",
+            "generar-pdf"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-33 - Logout Funcionario limpia sesión",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"CP-33: Status 200\", function () {\r",
+              "    pm.response.to.have.status(200);\r",
+              "});\r",
+              "\r",
+              "pm.test(\"CP-33: Mensaje de sesión cerrada\", function () {\r",
+              "    const body = pm.response.json();\r",
+              "    pm.expect(body).to.have.property('mensaje', 'Sesión cerrada');\r",
+              "});\r",
+              "\r",
+              "pm.test(\"CP-33: Cookie token eliminada\", function () {\r",
+              "    pm.expect(pm.cookies.has('token')).to.be.false;\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/auth/logout",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "logout"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-34 - Flujo E2E Alertas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"CP-34: Sistema mantiene alertas tras flujo completo\", function () {\r",
+              "    pm.response.to.have.status(200);\r",
+              "});\r",
+              "\r",
+              "pm.test(\"CP-34: Alerta de CP-07 persiste en ultimas\", function () {\r",
               "    const body = pm.response.json();\r",
               "    const alertaId = pm.collectionVariables.get('alerta_id');\r",
               "    const encontrada = body.find(a => a.id === alertaId);\r",
               "    pm.expect(encontrada).to.not.be.undefined;\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-13: Alerta tiene todos los campos requeridos\", function () {\r",
+              "pm.test(\"CP-34: Alerta tiene todos los campos requeridos\", function () {\r",
               "    const body = pm.response.json();\r",
               "    const alertaId = pm.collectionVariables.get('alerta_id');\r",
               "    const encontrada = body.find(a => a.id === alertaId);\r",
@@ -640,14 +1772,14 @@
               "    pm.expect(encontrada).to.have.property('hora_suceso');\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-13: Alerta marcada como vista en CP-11 tiene estado 1\", function () {\r",
+              "pm.test(\"CP-34: Alerta marcada como vista en CP-13 tiene estado 1\", function () {\r",
               "    const body = pm.response.json();\r",
               "    const alertaId = pm.collectionVariables.get('alerta_id');\r",
               "    const encontrada = body.find(a => a.id === alertaId);\r",
               "    pm.expect(encontrada.estado).to.eql(1);\r",
               "});\r",
               "\r",
-              "pm.test(\"CP-13: Camara creada en CP-08 tiene id válido\", function () {\r",
+              "pm.test(\"CP-34: Camara creada en CP-10 tiene id válido\", function () {\r",
               "    const camaraId = pm.collectionVariables.get('camara_id');\r",
               "    pm.expect(camaraId).to.be.a('number');\r",
               "});"
@@ -714,6 +1846,199 @@
         }
       },
       "response": []
+    },
+    {
+      "name": "CP-35 - Flujo E2E Usuario",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Usuario creado en CP-01 persiste\", () => {\r",
+              "  pm.expect(pm.response.code).to.eql(200);\r",
+              "  const body = pm.response.json();\r",
+              "  pm.expect(body.id).to.eql(\r",
+              "    pm.collectionVariables.get(\"usuario_creado_id\")\r",
+              "  );\r",
+              "});\r",
+              "\r",
+              "pm.test(\"Tiempo de respuesta menor a 500ms\", () => {\r",
+              "  pm.expect(pm.response.responseTime).to.be.below(500);\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/usuarios/{{usuario_creado_id}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "usuarios",
+            "{{usuario_creado_id}}"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-36 - Flujo E2E Sectores",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Sector de CP-16 persiste en alltime\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  const ids = body.map(s => s.id);\r",
+              "  pm.expect(ids).to.include(\r",
+              "    pm.collectionVariables.get(\"sector_creado_id\")\r",
+              "  );\r",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/sectores/alltime",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "sectores",
+            "alltime"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "CP-37 - Flujo E2E Reglas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Regla de CP-29 persiste en listado\", () => {\r",
+              "  const body = pm.response.json();\r",
+              "  const ids = body.map(r => r.id);\r",
+              "  pm.expect(ids).to.include(\r",
+              "    pm.collectionVariables.get(\"regla_creada_id\")\r",
+              "  );\r",
+              "});\r",
+              "\r",
+              "pm.sendRequest({\r",
+              "    url: pm.variables.get('base_url') + '/api/auth/logout',\r",
+              "    method: 'POST',\r",
+              "    header: { 'Content-Type': 'application/json' }\r",
+              "})"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "disableBodyPruning": true
+      },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/reglas/obtener",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "reglas",
+            "obtener"
+          ]
+        }
+      },
+      "response": []
     }
   ],
   "variable": [
@@ -727,6 +2052,18 @@
     },
     {
       "key": "auth_token",
+      "value": ""
+    },
+    {
+      "key": "usuario_creado_id",
+      "value": ""
+    },
+    {
+      "key": "sector_creado_id",
+      "value": ""
+    },
+    {
+      "key": "regla_creada_id",
       "value": ""
     }
   ]
