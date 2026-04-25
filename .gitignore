@@ -137,3 +137,7 @@ dist
 
 #python-stream
 /python-stream/stream-env
+
+*.jtl
+
+.scannerwork

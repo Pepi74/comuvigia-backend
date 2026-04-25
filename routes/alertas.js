@@ -1,20 +1,13 @@
 // Endpoints para alertas
 import { Router } from 'express'
 import pool from '../config/db.js'
-import { createClient } from 'redis';
+import redisClient from '../config/redis.js';
 import { io } from '../app.js';
 import { verificarToken } from '../middlewares/auth.js';
 import { verificarRol } from '../middlewares/roles.js';
+import { crearAlertaBase } from '../services/alert.service.js';
 
 const router = Router()
-
-// Conexión a Redis
-const redisClient = createClient(
-  {
-    url: 'redis://redis:6379',
-  }
-);
-await redisClient.connect();
 
 router.get('/', verificarToken, verificarRol([1, 2]), async (_, res) => {
   try {
@@ -43,50 +36,15 @@ router.post('/nueva-alerta', async (req, res) => {
     const alerta = req.body;
     const { id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, estado, frames, fps } = alerta;
 
-    // 1. Primero insertar la alerta en la BD
-    let result;
-    if (estado !== undefined && estado !== null) {
-      const status = parseInt(estado);
-      if (descripcion_suceso) {
-        result = await pool.query(
-          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, estado) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-          [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso, status]
-        );
-      } else {
-        result = await pool.query(
-          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, estado) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-          [id_camara, mensaje, hora_suceso, tipo, score_confianza, status]
-        );
-      }
-    } else {
-      if (descripcion_suceso) {
-        result = await pool.query(
-          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-          [id_camara, mensaje, hora_suceso, tipo, score_confianza, descripcion_suceso]
-        );
-      } else {
-        result = await pool.query(
-          `INSERT INTO alertas (id_camara, mensaje, hora_suceso, tipo, score_confianza)
-           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-          [id_camara, mensaje, hora_suceso, tipo, score_confianza]
-        );
-      }
-    }
+    const nuevaAlerta = await crearAlertaBase({
+      alerta,
+      pool,
+      redisClient,
+      io
+    });
 
-    const nuevaAlerta = result.rows[0];
-
-    const sector = await pool.query(
-      "SELECT id_sector FROM camaras WHERE id = $1", [id_camara]
-    )
-
-    console.log(sector.rows[0].id_sector)
-    nuevaAlerta.id_sector = sector.rows[0].id_sector
-
-    console.log(typeof(frames))
-    // 2. Si hay frames, guardarlos en S3 y obtener el key
     if (frames && frames.length > 0) {
-      console.log(id_camara)
+      //console.log(id_camara)
       try {
         const metadata = {
           alert_id: nuevaAlerta.id,
@@ -108,7 +66,7 @@ router.post('/nueva-alerta', async (req, res) => {
             fps: fps
           })
         });
-        console.log(response)
+        //console.log(response)
         const s3Result = await response.json();
 
         if (s3Result.success) {
@@ -130,15 +88,7 @@ router.post('/nueva-alerta', async (req, res) => {
         // No guardar la alerta completa si hay error con los frames
         res.status(500).json({ error: s3Error });
       }
-    } else{console.log("jaime")}
-
-    // 4. Guardar en Redis y emitir WebSocket
-    await redisClient.lPush('alertas', JSON.stringify(nuevaAlerta));
-    await redisClient.set(`alerta:${nuevaAlerta.id}`, JSON.stringify(nuevaAlerta));
-    if (nuevaAlerta.estado === 0) await redisClient.sAdd('alertas_no_vistas', nuevaAlerta.id.toString());
-    await redisClient.lTrim('alertas', 0, 99);
-
-    io.emit('nueva-alerta', nuevaAlerta);
+    } //else{console.log("jaime")}
 
     res.status(201).json(nuevaAlerta);
 
@@ -542,7 +492,7 @@ router.get('/estadisticas-camara',verificarToken, verificarRol([1, 2]), async (r
     } else {
       endDate = new Date();
       startDate = new Date();
-      startDate.setDate(endDate.getDate() - parseInt(dias));
+      startDate.setDate(endDate.getDate() - Number.parseInt(dias));
     }
 
     const fechaInicioStr = startDate.toISOString().replace('T', ' ').substring(0, 19);
@@ -554,7 +504,7 @@ router.get('/estadisticas-camara',verificarToken, verificarRol([1, 2]), async (r
     client = await pool.connect();
 
     const query = `SELECT * FROM reporte_alertas_por_camara($1, $2, $3, $4)`;
-    const result = await client.query(query, [fechaInicioStr, fechaFinStr, grupo, parseInt(id_camara)]);
+    const result = await client.query(query, [fechaInicioStr, fechaFinStr, grupo, Number.parseInt(id_camara)]);
 
     if (result.rows.length === 0) {
       return res.json({
@@ -591,14 +541,14 @@ router.get('/estadisticas-camara',verificarToken, verificarRol([1, 2]), async (r
     };
 
     result.rows.forEach(row => {
-      totales.total_alertas += parseInt(row.total_alertas) || 0;
-      totales.alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
-      totales.falsos_positivos += parseInt(row.falsos_positivos) || 0;
-      totales.merodeos += parseInt(row.merodeos) || 0;
-      totales.portonazos += parseInt(row.portonazos) || 0;
-      totales.asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
-      totales.no_especificados += parseInt(row.no_especificados) || 0;
-      totales.confianza_promedio += parseFloat(row.confianza_promedio) || 0;
+      totales.total_alertas += Number.parseInt(row.total_alertas) || 0;
+      totales.alertas_confirmadas += Number.parseInt(row.alertas_confirmadas) || 0;
+      totales.falsos_positivos += Number.parseInt(row.falsos_positivos) || 0;
+      totales.merodeos += Number.parseInt(row.merodeos) || 0;
+      totales.portonazos += Number.parseInt(row.portonazos) || 0;
+      totales.asaltos_hogar += Number.parseInt(row.asaltos_hogar) || 0;
+      totales.no_especificados += Number.parseInt(row.no_especificados) || 0;
+      totales.confianza_promedio += Number.parseFloat(row.confianza_promedio) || 0;
     });
 
     // Promedio de confianza
@@ -642,7 +592,7 @@ router.get('/estadisticas-totales', verificarToken, verificarRol([1, 2]), async 
     } else {
       endDate = new Date();
       startDate = new Date();
-      startDate.setDate(startDate.getDate() - parseInt(dias));
+      startDate.setDate(startDate.getDate() - Number.parseInt(dias));
     }
 
     // ✅ formato compatible con PostgreSQL TIMESTAMP

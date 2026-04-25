@@ -63,12 +63,12 @@ router.get('/alltime', verificarToken, verificarRol([1, 2]), async (_, res) => {
 // Crear un nuevo sector
 router.post('/', verificarToken, verificarRol([2]), async (req, res) => {
   try {
-    const { nombre, color, coordinates } = req.body;
+    const { nombre, descripcion, coordinates } = req.body;
     const result = await pool.query(
-      `INSERT INTO sectores (nombre, color, coordinates)
+      `INSERT INTO sectores (nombre_sector, descripcion, coordinates)
        VALUES ($1, $2, $3)
        RETURNING *`,
-      [nombre, color, JSON.stringify(coordinates)]
+      [nombre, descripcion, JSON.stringify(coordinates)]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {

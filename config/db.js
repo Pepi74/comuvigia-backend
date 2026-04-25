@@ -3,7 +3,7 @@ import dotenv from 'dotenv'
 
 dotenv.config()
 
-types.setTypeParser(1700, val => parseFloat(val))
+types.setTypeParser(1700, val => Number.parseFloat(val))
 
 if (!process.env.DB_USER || !process.env.DB_HOST || !process.env.DB_NAME || !process.env.DB_PASSWORD || !process.env.DB_PORT) {
   throw new Error('Faltan variables de entorno para conexión a la base de datos')

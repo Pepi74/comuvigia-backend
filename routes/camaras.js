@@ -49,7 +49,7 @@ router.put('/:id', async (req, res) => {
     const result = await pool.query(query, values)
     
     io.emit('estado-camara', {
-      cameraId: parseInt(id),
+      cameraId: Number.parseInt(id),
       estado: estado,
       ultima_conexion: new Date().toISOString()
     });
@@ -315,7 +315,7 @@ router.patch('/:id', verificarToken, verificarRol([2]), async (req, res) => {
     
     if (updates.estado_camara !== undefined) {
       io.emit('estado-camara', {
-        cameraId: parseInt(id),
+        cameraId: Number.parseInt(id),
         estado: updates.estado_camara,
         ultima_conexion: new Date().toISOString()
       })

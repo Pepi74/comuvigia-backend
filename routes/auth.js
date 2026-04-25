@@ -36,10 +36,12 @@ router.post('/login', async (req, res) => {
       { expiresIn: '2h' } // Modificar si es necesario
     )
 
+    const isProd = process.env.NODE_ENV === 'production'
+
     res.cookie("token", token, {
       httpOnly: true,
-      secure: true,
-      sameSite: "none",
+      secure: isProd,
+      sameSite: isProd ? "none" : "lax",
       maxAge: 2 * 60 * 60 * 1000 // 2h
     })
 

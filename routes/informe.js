@@ -53,7 +53,7 @@ async function obtenerDatosParaPDF(fechaInicio, fechaFin) {
     } else {
       endDate = new Date();
       startDate = new Date();
-      startDate.setDate(startDate.getDate() - parseInt(dias));
+      startDate.setDate(startDate.getDate() - Number.parseInt(dias));
     }
 
     // ✅ DEFINIR estas variables que faltaban
@@ -112,13 +112,13 @@ async function obtenerDatosParaPDF(fechaInicio, fechaFin) {
     
     result.rows.forEach(row => {
       // Totales generales
-      totales.total_alertas += parseInt(row.total_alertas) || 0;
-      totales.alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
-      totales.falsos_positivos += parseInt(row.falsos_positivos) || 0;
-      totales.merodeos += parseInt(row.merodeos) || 0;
-      totales.portonazos += parseInt(row.portonazos) || 0;
-      totales.no_especificados += parseInt(row.no_especificados) || 0;
-      totales.asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
+      totales.total_alertas += Number.parseInt(row.total_alertas) || 0;
+      totales.alertas_confirmadas += Number.parseInt(row.alertas_confirmadas) || 0;
+      totales.falsos_positivos += Number.parseInt(row.falsos_positivos) || 0;
+      totales.merodeos += Number.parseInt(row.merodeos) || 0;
+      totales.portonazos += Number.parseInt(row.portonazos) || 0;
+      totales.no_especificados += Number.parseInt(row.no_especificados) || 0;
+      totales.asaltos_hogar += Number.parseInt(row.asaltos_hogar) || 0;
 
       // Por sector
       const sectorId = row.id_sector;
@@ -137,13 +137,13 @@ async function obtenerDatosParaPDF(fechaInicio, fechaFin) {
         };
       }
       sectores[sectorId].coordinates = row.coordinates || null;
-      sectores[sectorId].total_alertas += parseInt(row.total_alertas) || 0;
-      sectores[sectorId].alertas_confirmadas += parseInt(row.alertas_confirmadas) || 0;
-      sectores[sectorId].falsos_positivos += parseInt(row.falsos_positivos) || 0;
-      sectores[sectorId].merodeos += parseInt(row.merodeos) || 0;
-      sectores[sectorId].portonazos += parseInt(row.portonazos) || 0;
-      sectores[sectorId].asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
-      sectores[sectorId].no_especificados += parseInt(row.no_especificados) || 0;
+      sectores[sectorId].total_alertas += Number.parseInt(row.total_alertas) || 0;
+      sectores[sectorId].alertas_confirmadas += Number.parseInt(row.alertas_confirmadas) || 0;
+      sectores[sectorId].falsos_positivos += Number.parseInt(row.falsos_positivos) || 0;
+      sectores[sectorId].merodeos += Number.parseInt(row.merodeos) || 0;
+      sectores[sectorId].portonazos += Number.parseInt(row.portonazos) || 0;
+      sectores[sectorId].asaltos_hogar += Number.parseInt(row.asaltos_hogar) || 0;
+      sectores[sectorId].no_especificados += Number.parseInt(row.no_especificados) || 0;
     });
 
     // Calcular tasas (igual que en tu endpoint original)
@@ -195,11 +195,11 @@ async function obtenerDatosParaPDF(fechaInicio, fechaFin) {
       else if (hora >= 12 && hora < 18) franja = 'tarde';
       else franja = 'noche';
 
-      horarios[franja].merodeos += parseInt(row.merodeos) || 0;
-      horarios[franja].portonazos += parseInt(row.portonazos) || 0;
-      horarios[franja].asaltos_hogar += parseInt(row.asaltos_hogar) || 0;
-      horarios[franja].falsos_positivos += parseInt(row.falsos_positivos) || 0;
-      horarios[franja].no_especificados += parseInt(row.no_especificados) || 0;
+      horarios[franja].merodeos += Number.parseInt(row.merodeos) || 0;
+      horarios[franja].portonazos += Number.parseInt(row.portonazos) || 0;
+      horarios[franja].asaltos_hogar += Number.parseInt(row.asaltos_hogar) || 0;
+      horarios[franja].falsos_positivos += Number.parseInt(row.falsos_positivos) || 0;
+      horarios[franja].no_especificados += Number.parseInt(row.no_especificados) || 0;
     });
 
     return {
@@ -424,7 +424,7 @@ async function generarGraficoComoImagen(tipo, datos, ancho = 1000, alto = 600) {
         const conteoPorDia = {};
         datos.registros_crudos?.forEach(row => {
           const fecha = new Date(row.periodo).toISOString().split('T')[0]; // yyyy-mm-dd
-          conteoPorDia[fecha] = (conteoPorDia[fecha] || 0) + (parseInt(row.total_alertas) || 0);
+          conteoPorDia[fecha] = (conteoPorDia[fecha] || 0) + (Number.parseInt(row.total_alertas) || 0);
         });
 
         const fechasOrdenadas = Object.keys(conteoPorDia).sort();
@@ -848,7 +848,7 @@ function agregarTablaResumen(doc, datos, colores, startY) {
     // Color valor
     let colorValor = colores.texto;
     if (metric.tipo === 'porcentaje') {
-      const valorNum = parseInt(metric.value);
+      const valorNum = Number.parseInt(metric.value);
       colorValor = valorNum < 50 ? colores.acento : valorNum < 80 ? '#f39c12' : '#27ae60';
     }
 
