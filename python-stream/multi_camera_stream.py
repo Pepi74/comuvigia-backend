@@ -9,7 +9,7 @@ from threading import Thread, Lock
 import threading
 from collections import deque
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 import boto3
 from botocore.client import Config
@@ -2048,7 +2048,7 @@ def actualizar_estado_camara(camera_id):
         socketio.emit('estado-camara', {
             'cameraId': camera_id,
             'estado': nuevo_estado,
-            'ultima_conexion': datetime.utcnow().isoformat() + 'Z'
+            'ultima_conexion': datetime.now(timezone.utc).isoformat()
         })
         
         return jsonify({

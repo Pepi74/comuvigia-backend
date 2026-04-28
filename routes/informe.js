@@ -427,7 +427,7 @@ async function generarGraficoComoImagen(tipo, datos, ancho = 1000, alto = 600) {
           conteoPorDia[fecha] = (conteoPorDia[fecha] || 0) + (Number.parseInt(row.total_alertas) || 0);
         });
 
-        const fechasOrdenadas = Object.keys(conteoPorDia).sort();
+        const fechasOrdenadas = Object.keys(conteoPorDia).sort((a, b) => new Date(a) - new Date(b));
         const valores = fechasOrdenadas.map(f => conteoPorDia[f]);
 
         config = {

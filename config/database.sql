@@ -513,4 +513,4 @@ INSERT INTO reglas(id, riesgo, tipoAlerta, horaInicio, horaFin, score, sector) V
 (3, 'alto', '3', '23:59', '23:59', 100, ''),
 (4, 'critico', '', '00:00', '23:59', 90, '');
 
-SELECT pg_catalog.setval('public.tipos_reglas_id_seq', 4, true);
+SELECT pg_catalog.setval('public.reglas_id_seq', 4, true);

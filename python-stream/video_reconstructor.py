@@ -1119,7 +1119,7 @@ def extract_thumbnail_from_key(obj_key):
 def _extract_thumb_from_tar(batch_key):
     """Thumbnail desde .tar.gz (primer frame_)"""
     try:
-        resp = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=batch_key)
+        resp = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=batch_key, ExpectedBucketOwner=os.getenv('AWS_ACCOUNT_ID', ''))
         tar_bytes = BytesIO(resp['Body'].read())
 
         with tarfile.open(fileobj=tar_bytes, mode='r:gz') as tar:
@@ -1160,7 +1160,7 @@ def _extract_thumb_from_mkv(mkv_key):
         # Si ya existe de antes, intenta reutilizar (opc.)
         if not os.path.exists(mkv_path):
             with open(mkv_path, 'wb') as f:
-                obj = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=mkv_key)
+                obj = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=mkv_key, ExpectedBucketOwner=os.getenv('AWS_ACCOUNT_ID', ''))
                 for chunk in obj['Body'].iter_chunks(chunk_size=1024 * 1024):
                     if chunk:
                         f.write(chunk)
@@ -1272,7 +1272,7 @@ def _download_s3_object_to_temp(key: str) -> str | None:
         if os.path.exists(out) and os.path.getsize(out) > 0:
             return out
         with open(out, 'wb') as f:
-            obj = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=key)
+            obj = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=key, ExpectedBucketOwner=os.getenv('AWS_ACCOUNT_ID', ''))
             for chunk in obj['Body'].iter_chunks(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)

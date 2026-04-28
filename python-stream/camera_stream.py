@@ -5,6 +5,7 @@ import logging
 from threading import Thread, Lock
 import time
 from datetime import datetime
+import os
 
 app = Flask(__name__)
 start_time = time.time()
@@ -114,4 +115,4 @@ def health_check():
     return jsonify(health_status), 200
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=FLASK_PORT, threaded=True)
+    app.run(host=os.getenv('FLASK_HOST', '127.0.0.1'), port=FLASK_PORT, threaded=True)

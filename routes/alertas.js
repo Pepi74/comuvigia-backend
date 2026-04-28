@@ -243,7 +243,7 @@ router.get('/no-vistas', verificarToken, verificarRol([1, 2]), async (_, res) =>
 // --- Enviar últimas 100 alertas ---
 router.get('/ultimas', verificarToken, verificarRol([1, 2]), async (_, res) => {
   const ultimas = await redisClient.lRange('alertas', 0, 99);
-  const alertas = ultimas.map(JSON.parse);
+  const alertas = ultimas.map(item => JSON.parse(item));
   res.json(alertas);
 });
 
@@ -361,7 +361,7 @@ router.put('/editar-descripcion/:id', async (req, res) => {
       return parsed.id === alertaActualizada.id ? alertaActualizada : parsed;
     });
     await redisClient.del('alertas');
-    await redisClient.lPush('alertas', nuevasAlertas.map(JSON.stringify));
+    await redisClient.lPush('alertas', nuevasAlertas.map(item => JSON.stringify(item)));
     await redisClient.lTrim('alertas', 0, 99);
 
     io.emit("nueva-descripcion", alertaActualizada);
