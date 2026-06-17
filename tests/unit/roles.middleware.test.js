@@ -30,4 +30,13 @@ describe('verificarRol', () => {
         expect(mockNext).toHaveBeenCalled();
         expect(mockRes.status).not.toHaveBeenCalled();
     });
+
+    it('llama a next() si el rol del usuario es 0 y está permitido', () => {
+        const mockReq = { user: { rol: 0 } };
+
+        verificarRol([0, 1])(mockReq, mockRes, mockNext);
+
+        expect(mockNext).toHaveBeenCalled();
+        expect(mockRes.status).not.toHaveBeenCalled();
+    });
 });

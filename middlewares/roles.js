@@ -2,7 +2,7 @@
 export function verificarRol(rolesPermitidos) {
   return (req, res, next) => {
     const rolUsuario = req.user?.rol
-    if (!rolUsuario || !rolesPermitidos.includes(rolUsuario)) {
+    if (!rolesPermitidos.includes(rolUsuario)) {
       return res.status(403).json({ mensaje: 'Acceso denegado: no tienes permisos suficientes' }) // Cambiar mensaje si es necesario
     }
     next()
