@@ -14,7 +14,7 @@ function generarToken() {
 
 beforeAll(async () => {
   await connectRedis();
-})
+});
 
 describe('POST /api/alertas/nueva-alerta (integración)', () => {
 

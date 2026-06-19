@@ -182,7 +182,8 @@ sonar-scanner \
   -Dsonar.sources=. \
   -Dsonar.host.url=http://localhost:9010 \
   -Dsonar.token=TU_TOKEN \
-  -Dsonar.exclusions=node_modules/**,coverage/**,tests/** \
+  -Dsonar.exclusions=node_modules/**,coverage/**,tests/**,python-stream/**,python-retention/** \
+  -Dsonar.coverage.exclusions=python-stream/**,python-retention/**,jest.config.cjs,server.js \
   -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
 ```
 
