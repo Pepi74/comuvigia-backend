@@ -141,3 +141,9 @@ dist
 *.jtl
 
 .scannerwork
+
+__pycache__
+.pytest_cache
+
+.coverage
+coverage.xml

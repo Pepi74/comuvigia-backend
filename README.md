@@ -182,9 +182,10 @@ sonar-scanner \
   -Dsonar.sources=. \
   -Dsonar.host.url=http://localhost:9010 \
   -Dsonar.token=TU_TOKEN \
-  -Dsonar.exclusions=node_modules/**,coverage/**,tests/**,python-stream/**,python-retention/** \
-  -Dsonar.coverage.exclusions=python-stream/**,python-retention/**,jest.config.cjs,server.js \
-  -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+  -Dsonar.exclusions=node_modules/**,coverage/**,tests/**,python-stream/tests/**,python-stream/prueba.py,python-stream/camara_stream_antiguo.py,python-stream/camera_stream.py,python-stream/config.py,python-stream/config-3.py \
+  -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+  -Dsonar.python.coverage.reportPaths=python-stream/coverage.xml \
+  -Dsonar.python.version=3.12
 ```
 
 > Reemplazar `TU_TOKEN` con el token generado en SonarQube para el proyecto `comuvigia-backend`.
