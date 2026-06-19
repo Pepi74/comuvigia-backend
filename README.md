@@ -171,8 +171,16 @@ Acceder en `http://localhost:9010` (usuario: admin, contraseña: admin).
 
 ### Ejecutar análisis
 Generar cobertura primero:
+
+* NodeJS:
 ```bash
 npm test -- --coverage --coverageReporters=lcov
+```
+
+* Flask:
+```bash
+cd python-stream
+python3 -m pytest tests/ --cov=. --cov-report=xml
 ```
 
 Luego ejecutar el scanner:
