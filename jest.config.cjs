@@ -4,5 +4,6 @@ module.exports = {
   testMatch: ['**/tests/**/*.test.js'],
   clearMocks: true,
   transform: {},
-  setupFiles: ['./tests/setup.js']
+  setupFiles: ['./tests/setup.js'],
+  silent: true
 };

@@ -23,11 +23,12 @@ router.get('/', async (_, res) => {
   }
 })
 
-// PUT - Actualizar estado cámara
+// PUT - Actualizar cámara
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params
-    const { estado } = req.body
+    const { estado, nombre, posicion, direccion, estado_camara, ultima_conexion, link_camara, id_sector, zona_interes } = req.body
+
 
     // Verificar si la cámara existe
     const checkResult = await pool.query('SELECT id FROM camaras WHERE id = $1', [id])
@@ -35,29 +36,57 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Cámara no encontrada' })
     }
 
+    const camaraAnterior = checkResult.rows[0]
+
+    if (estado !== undefined && Object.keys(req.body).length === 1) {
+      const query = `
+        UPDATE camaras SET
+          estado_camara = $1
+        WHERE id = $2
+        RETURNING *
+        `
+        const values = [
+          estado,
+          id
+        ]
+        const result = await pool.query(query, values)
+
+        io.emit('estado-camara', {
+          cameraId: Number.parseInt(id),
+          estado: estado,
+          ultima_conexion: new Date().toISOString()
+        });
+
+        // Enviar comando al servicio de streaming
+       controlCamera(id, estado ? 'restart' : 'stop');
+    
+       res.json(result.rows[0])
+    }
+
+    // Actualización completa
+    const estadoFinal = (estado_camara !== undefined && estado_camara !== null)
+      ? Boolean(estado_camara)
+      : camaraAnterior.estado_camara;
+
     const query = `
       UPDATE camaras SET
-        estado_camara = $1
-      WHERE id = $2
+        nombre = $1, posicion = $2, direccion = $3, estado_camara = $4,
+        ultima_conexion = $5, link_camara = $6, id_sector = $7, zona_interes = $8
+      WHERE id = $9
       RETURNING *
     `
     const values = [
-      estado,
-      id
+      nombre, posicion, direccion, estadoFinal,
+      ultima_conexion || new Date().toISOString(),
+      link_camara, id_sector, zona_interes, id
     ]
 
     const result = await pool.query(query, values)
+    const camaraActualizada = result.rows[0]
     
-    io.emit('estado-camara', {
-      cameraId: Number.parseInt(id),
-      estado: estado,
-      ultima_conexion: new Date().toISOString()
-    });
+    notifyFlaskCameraUpdate('update', camaraActualizada)
+    return res.json(camaraActualizada)
     
-     // Enviar comando al servicio de streaming
-    controlCamera(id, estado ? 'restart' : 'stop');
-
-    res.json(result.rows[0])
   } catch (error) {
     console.error('Error al actualizar cámara:', error)
     
@@ -353,78 +382,6 @@ async function obtenerTodasLasCamaras() {
     return []
   }
 }
-
-// PUT - Actualizar cámara
-router.put('/:id', verificarToken, verificarRol([2]), async (req, res) => {
-  try {
-    const { id } = req.params
-    const {
-      nombre,
-      posicion,
-      direccion,
-      estado_camara,
-      ultima_conexion,
-      link_camara,
-      id_sector,
-      zona_interes
-    } = req.body
-
-    // Verificar si la cámara existe
-    const checkResult = await pool.query('SELECT * FROM camaras WHERE id = $1', [id])
-    if (checkResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Cámara no encontrada' })
-    }
-
-    const camaraAnterior = checkResult.rows[0]
-    console.log('🔍 estado_camara anterior:', camaraAnterior.estado_camara);
-    const ultimoIdCamara = camaraAnterior.id + 1;
-
-    const estadoFinal = (estado_camara !== undefined && estado_camara !== null) 
-      ? Boolean(estado_camara) 
-      : camaraAnterior.estado_camara;
-
-    const query = `
-      UPDATE camaras SET
-        nombre = $1,
-        posicion = $2,
-        direccion = $3,
-        estado_camara = $4,
-        ultima_conexion = $5,
-        link_camara = $6,
-        id_sector = $7,
-        zona_interes = $8
-      WHERE id = $9
-      RETURNING *
-    `
-
-    const values = [
-      nombre,
-      posicion,
-      direccion,
-      estadoFinal,
-      ultima_conexion || new Date().toISOString(),
-      link_camara,
-      id_sector,
-      zona_interes,
-      id
-    ]
-
-    const result = await pool.query(query, values)
-    const camaraActualizada = result.rows[0]
-    
-    notifyFlaskCameraUpdate('update', camaraActualizada)
-    
-    res.json(camaraActualizada)
-  } catch (error) {
-    console.error('Error al actualizar cámara:', error)
-    
-    if (error.code === '23503') {
-      return res.status(400).json({ error: 'El sector especificado no existe' })
-    }
-    
-    res.status(500).send('Error en el servidor')
-  }
-})
 
 // DELETE - Eliminar cámara
 router.delete('/:id', verificarToken, verificarRol([2]), async (req, res) => {

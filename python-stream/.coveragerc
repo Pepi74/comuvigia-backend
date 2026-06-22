@@ -1,0 +1,63 @@
+[run]
+omit =
+    tests/*
+    prueba.py
+    camara_stream_antiguo.py
+    camera_stream.py
+    config.py
+    config-3.py
+
+[report]
+exclude_also =
+    # --- Clases acopladas a hardware / red (captura, FFmpeg, S3, RabbitMQ) ---
+    class VideoStream
+    class FFmpegSegmenter
+    class RabbitPublisher
+    class S3Client
+    class VideoReconstructor
+    class SocketIOClientManager
+    # --- Funciones de captura/streaming en vivo (RTSP, OpenCV, MJPEG) ---
+    def generate_frames
+    def error_frame
+    def save_frames
+    def save_single_frame
+    def update
+    def save_batch
+    def upload_mkv_to_s3
+    def get_frame
+    def handle_reconnection_failure
+    def send_reconnection_alert
+    def stop_components
+    def enable_camera
+    # --- Gestión de streams en vivo ---
+    def manejar_stream_camara
+    def procesar_camara_simple
+    def activar_camara_simple
+    def detener_camara_simple
+    def actualizar_estado_camara
+    def video_feed
+    def debug_camera
+    def debug_ffmpeg
+    def debug_config
+    def socketio_debug
+    # --- video_reconstructor: descarga S3 + reconstrucción OpenCV ---
+    def reconstruct_video
+    def list_available_batches
+    def list_virtual_videos
+    def generate_thumbnail_on_demand
+    def find_closest_batch
+    def extract_thumbnail_from_key
+    def download_video
+    def download_clip
+    def play_clip
+    def download_evidence
+    # --- Guardas defensivas estándar ---
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    except Exception
+    def _find_mkv_covering_time
+    def _extract_thumb_from_tar
+    def _extract_thumb_from_mkv
+    def _download_s3_object_to_temp
+    def _list_mkv_in_range
+    def _list_mkv_by_day_range
